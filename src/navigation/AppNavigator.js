@@ -1,42 +1,48 @@
-import React from "react";
-import { NavigationContainer } from "@react-navigation/native";
-import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import React from 'react';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Ionicons } from '@expo/vector-icons';
 
-// Screens
-import SplashScreen from "../SplashScreen";
-import OnboardingScreen from "../OnboardingScreen";
-import AuthScreen from "../AuthScreen";
-import HomeScreen from "../HomeScreen";
-import ExpenseScreen from "../ExpenseScreen";
-import IncomeScreen from "../IncomeScreen";
-import ProfileScreen from "../ProfileScreen";
+// Import your screens
+import HomeScreen from '../screens/HomeScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 
-const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-// 🔥 Bottom Tabs
-function MainTabs() {
-  return (
-    <Tab.Navigator>
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Expense" component={ExpenseScreen} />
-      <Tab.Screen name="Income" component={IncomeScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
-    </Tab.Navigator>
-  );
-}
-
-// 🔥 Main Navigation
 export default function AppNavigator() {
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Splash" component={SplashScreen} />
-        <Stack.Screen name="Onboarding" component={OnboardingScreen} />
-        <Stack.Screen name="Auth" component={AuthScreen} />
-        <Stack.Screen name="Main" component={MainTabs} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        headerShown: false,
+
+        tabBarIcon: ({ color, size, focused }) => {
+          let iconName;
+
+          if (route.name === 'Home') {
+            iconName = focused ? 'home' : 'home-outline';
+          } else if (route.name === 'Profile') {
+            iconName = focused ? 'person' : 'person-outline';
+          }
+
+          return <Ionicons name={iconName} size={size} color={color} />;
+        },
+
+        tabBarActiveTintColor: '#007AFF', // iOS blue
+        tabBarInactiveTintColor: 'gray',
+
+        tabBarStyle: {
+          backgroundColor: '#fff',
+          height: 60,
+          paddingBottom: 5,
+          paddingTop: 5,
+        },
+
+        tabBarLabelStyle: {
+          fontSize: 12,
+        },
+      })}
+    >
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
+    </Tab.Navigator>
   );
 }
