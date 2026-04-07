@@ -9,21 +9,21 @@ import {
 } from 'react-native';
 
 const FriendScreen = ({
-  transactions,
-  renderTransaction,
-  borrowedTotal,
-  givenTotal,
-  showBorrowForm,
-  setShowBorrowForm,
-  selectedBorrowType,
-  setSelectedBorrowType,
-  borrowAmount,
-  setBorrowAmount,
-  borrowRecipient,
-  setBorrowRecipient,
-  borrowReason,
-  setBorrowReason,
-  addBorrowRecord,
+  transactions = [],
+  renderTransaction = () => null,
+  borrowedTotal = 0,
+  givenTotal = 0,
+  showBorrowForm = false,
+  setShowBorrowForm = () => {},
+  selectedBorrowType = '',
+  setSelectedBorrowType = () => {},
+  borrowAmount = '',
+  setBorrowAmount = () => {},
+  borrowRecipient = '',
+  setBorrowRecipient = () => {},
+  borrowReason = '',
+  setBorrowReason = () => {},
+  addBorrowRecord = () => {},
 }) => {
   const borrowTypeOptions = ['Borrowed', 'Given'];
   const filtered = transactions.filter(item => item.type === 'Borrowed' || item.type === 'Given');
