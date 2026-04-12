@@ -2,6 +2,7 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 
+// Import screens
 import HomeScreen from '../screens/HomeScreen';
 import ExpenseScreen from '../screens/ExpenseScreen';
 import FriendScreen from '../screens/FriendScreen';
@@ -9,7 +10,7 @@ import ProfileScreen from '../screens/ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 
-export default function AppNavigator() {
+export default function AppNavigator({ transactions, setTransactions }) {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -46,10 +47,36 @@ export default function AppNavigator() {
         },
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Expenses" component={ExpenseScreen} />
-      <Tab.Screen name="Friends" component={FriendScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Home">
+        {() => (
+          <HomeScreen
+            transactions={transactions}
+            setTransactions={setTransactions}
+          />
+        )}
+      </Tab.Screen>
+
+      <Tab.Screen name="Expenses">
+        {() => (
+          <ExpenseScreen
+            transactions={transactions}
+            setTransactions={setTransactions}
+          />
+        )}
+      </Tab.Screen>
+
+      <Tab.Screen name="Friends">
+        {() => (
+          <FriendScreen
+            transactions={transactions}
+            setTransactions={setTransactions}
+          />
+        )}
+      </Tab.Screen>
+
+      <Tab.Screen name="Profile">
+        {() => <ProfileScreen />}
+      </Tab.Screen>
     </Tab.Navigator>
   );
 }
