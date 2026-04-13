@@ -1,350 +1,460 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
+  Alert,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
-  StyleSheet,
-  FlatList,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import colors from '../theme/colors';
 
-const FriendScreen = ({
-  transactions = [],
-  renderTransaction = () => null,
-  borrowedTotal = 0,
-  givenTotal = 0,
-  showBorrowForm = false,
-  setShowBorrowForm = () => {},
-  selectedBorrowType = '',
-  setSelectedBorrowType = () => {},
-  borrowAmount = '',
-  setBorrowAmount = () => {},
-  borrowRecipient = '',
-  setBorrowRecipient = () => {},
-  borrowReason = '',
-  setBorrowReason = () => {},
-  addBorrowRecord = () => {},
-}) => {
-  const borrowTypeOptions = ['Borrowed', 'Given'];
-  const filtered = transactions.filter(item => item.type === 'Borrowed' || item.type === 'Given');
-  const netBorrowed = borrowedTotal - givenTotal;
-  const recipientGroups = filtered.reduce((groups, item) => {
-    const name = item.recipient || 'Friend';
-    if (!groups[name]) {
-      groups[name] = { name, borrowed: 0, given: 0, net: 0 };
+const formatCurrency = (value) => `$${value.toFixed(2)}`;
+
+export default function FriendScreen({
+  transactions,
+  addTransaction,
+  removeTransaction,
+}) {
+  const [selectedType, setSelectedType] = useState('Borrowed');
+  const [amount, setAmount] = useState('');
+  const [recipient, setRecipient] = useState('');
+  const [reason, setReason] = useState('');
+  const [showForm, setShowForm] = useState(false);
+
+  const friendTransactions = transactions.filter(
+    (item) => item.type === 'Borrowed' || item.type === 'Given'
+  );
+  const borrowedTotal = friendTransactions
+    .filter((item) => item.type === 'Borrowed')
+    .reduce((sum, item) => sum + item.amount, 0);
+  const givenTotal = friendTransactions
+    .filter((item) => item.type === 'Given')
+    .reduce((sum, item) => sum + item.amount, 0);
+  const netBalance = borrowedTotal - givenTotal;
+
+  const friendBalances = friendTransactions.reduce((groups, item) => {
+    const key = item.recipient || 'Friend';
+
+    if (!groups[key]) {
+      groups[key] = { name: key, borrowed: 0, given: 0, net: 0 };
     }
+
     if (item.type === 'Borrowed') {
-      groups[name].borrowed += item.amount;
-      groups[name].net += item.amount;
+      groups[key].borrowed += item.amount;
+      groups[key].net += item.amount;
     } else {
-      groups[name].given += item.amount;
-      groups[name].net -= item.amount;
+      groups[key].given += item.amount;
+      groups[key].net -= item.amount;
     }
+
     return groups;
   }, {});
 
-  return (
-    <>
-      <View style={styles.userBanner}>
-        <Text style={styles.welcomeText}>Borrow & Give</Text>
-        <Text style={styles.welcomeSubText}>Track money you borrowed or gave to friends.</Text>
-      </View>
+  const sortedFriends = Object.values(friendBalances).sort(
+    (left, right) => Math.abs(right.net) - Math.abs(left.net)
+  );
 
-      <View style={styles.cardSummary}>
-        <View style={styles.summaryBlock}>
-          <Text style={styles.summaryLabel}>Borrowed</Text>
-          <Text style={[styles.summaryValue, styles.borrowedText]}>${borrowedTotal.toFixed(2)}</Text>
-        </View>
-        <View style={styles.summaryBlock}>
-          <Text style={styles.summaryLabel}>Given</Text>
-          <Text style={[styles.summaryValue, styles.givenText]}>${givenTotal.toFixed(2)}</Text>
-        </View>
-        <View style={styles.summaryBlock}>
-          <Text style={styles.summaryLabel}>Net</Text>
-          <Text style={[styles.summaryValue, netBorrowed >= 0 ? styles.borrowPositive : styles.borrowNegative]}>
-            ${netBorrowed.toFixed(2)}
+  const handleSave = () => {
+    if (!recipient.trim()) {
+      Alert.alert('Missing name', 'Add the friend or recipient name first.');
+      return;
+    }
+
+    const result = addTransaction({
+      type: selectedType,
+      amount,
+      recipient,
+      note: reason,
+    });
+
+    if (!result.ok) {
+      Alert.alert('Unable to save', result.message);
+      return;
+    }
+
+    setAmount('');
+    setRecipient('');
+    setReason('');
+    setShowForm(false);
+    Alert.alert('Saved', `${selectedType} record added.`);
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.heroCard}>
+          <Text style={styles.heroTitle}>Borrow & give</Text>
+          <Text style={styles.heroText}>
+            Track who owes you, who you owe, and the reason behind each transfer.
           </Text>
         </View>
-      </View>
 
-      <View style={styles.recipientSummary}>
-        <Text style={styles.sectionLabel}>Friends</Text>
-        {Object.values(recipientGroups).length === 0 ? (
-          <Text style={styles.emptyText}>No friends added yet.</Text>
-        ) : (
-          Object.values(recipientGroups).map(group => (
-            <View key={group.name} style={styles.recipientCard}>
-              <Text style={styles.recipientName}>{group.name}</Text>
-              <Text style={[styles.recipientNet, group.net >= 0 ? styles.borrowPositive : styles.borrowNegative]}>
-                {group.net >= 0 ? '+' : '-'}${Math.abs(group.net).toFixed(2)}
-              </Text>
-              <Text style={styles.recipientMeta}>
-                Borrowed ${group.borrowed.toFixed(2)} · Given ${group.given.toFixed(2)}
-              </Text>
-            </View>
-          ))
-        )}
-      </View>
+        <View style={styles.summaryCard}>
+          <View style={styles.summaryBlock}>
+            <Text style={styles.summaryLabel}>Borrowed</Text>
+            <Text style={[styles.summaryValue, styles.borrowedColor]}>
+              {formatCurrency(borrowedTotal)}
+            </Text>
+          </View>
+          <View style={styles.summaryBlock}>
+            <Text style={styles.summaryLabel}>Given</Text>
+            <Text style={[styles.summaryValue, styles.givenColor]}>
+              {formatCurrency(givenTotal)}
+            </Text>
+          </View>
+          <View style={styles.summaryBlock}>
+            <Text style={styles.summaryLabel}>Net</Text>
+            <Text
+              style={[
+                styles.summaryValue,
+                netBalance >= 0 ? styles.positiveNet : styles.negativeNet,
+              ]}
+            >
+              {formatCurrency(netBalance)}
+            </Text>
+          </View>
+        </View>
 
-      {!showBorrowForm && (
-        <View style={styles.fabSection}>
-          <TouchableOpacity style={styles.fabButton} onPress={() => setShowBorrowForm(true)}>
-            <Text style={styles.fabIcon}>+</Text>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Friend balances</Text>
+          {sortedFriends.length === 0 ? (
+            <Text style={styles.emptyText}>
+              No friend activity yet. Add a borrowed or given record to begin.
+            </Text>
+          ) : (
+            sortedFriends.map((friend) => (
+              <View key={friend.name} style={styles.friendRow}>
+                <View>
+                  <Text style={styles.friendName}>{friend.name}</Text>
+                  <Text style={styles.friendMeta}>
+                    Borrowed {formatCurrency(friend.borrowed)} · Given{' '}
+                    {formatCurrency(friend.given)}
+                  </Text>
+                </View>
+                <Text
+                  style={[
+                    styles.friendNet,
+                    friend.net >= 0 ? styles.positiveNet : styles.negativeNet,
+                  ]}
+                >
+                  {friend.net >= 0 ? '+' : '-'}
+                  {formatCurrency(Math.abs(friend.net))}
+                </Text>
+              </View>
+            ))
+          )}
+        </View>
+
+        {!showForm ? (
+          <TouchableOpacity
+            onPress={() => setShowForm(true)}
+            style={styles.primaryButton}
+          >
+            <Text style={styles.primaryButtonText}>Add borrow / give record</Text>
           </TouchableOpacity>
-          <Text style={styles.fabLabel}>Add borrow/give</Text>
-        </View>
-      )}
-
-      {showBorrowForm && (
-        <View style={styles.formSection}>
-          <Text style={styles.sectionLabel}>Record borrowed or given money</Text>
-
-          <View style={styles.optionRow}>
-            {borrowTypeOptions.map(option => (
-              <TouchableOpacity
-                key={option}
-                style={[styles.optionButton, selectedBorrowType === option && styles.selectedButton]}
-                onPress={() => setSelectedBorrowType(option)}
-              >
-                <Text style={[styles.optionText, selectedBorrowType === option && styles.selectedText]}>{option}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Friend / recipient name"
-            placeholderTextColor="#999"
-            value={borrowRecipient}
-            onChangeText={setBorrowRecipient}
-          />
-          <TextInput
-            style={styles.input}
-            keyboardType="numeric"
-            placeholder="Amount"
-            placeholderTextColor="#999"
-            value={borrowAmount}
-            onChangeText={setBorrowAmount}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Reason (optional)"
-            placeholderTextColor="#999"
-            value={borrowReason}
-            onChangeText={setBorrowReason}
-          />
-
-          <View style={styles.formActions}>
-            <TouchableOpacity style={[styles.addButton, styles.buttonSpacing]} onPress={addBorrowRecord}>
-              <Text style={styles.addButtonText}>Save</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelButton} onPress={() => setShowBorrowForm(false)}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      <View style={styles.listSection}>
-        <Text style={styles.sectionLabel}>Borrowed / Given history</Text>
-        {filtered.length === 0 ? (
-          <Text style={styles.emptyText}>No borrow records yet. Add one to get started.</Text>
         ) : (
-          <FlatList
-            data={filtered}
-            keyExtractor={item => item.id}
-            renderItem={renderTransaction}
-            scrollEnabled={false}
-          />
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>New friend entry</Text>
+            <View style={styles.toggleRow}>
+              {['Borrowed', 'Given'].map((option) => (
+                <TouchableOpacity
+                  key={option}
+                  onPress={() => setSelectedType(option)}
+                  style={[
+                    styles.toggleButton,
+                    selectedType === option && styles.toggleButtonActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.toggleText,
+                      selectedType === option && styles.toggleTextActive,
+                    ]}
+                  >
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TextInput
+              value={recipient}
+              onChangeText={setRecipient}
+              placeholder="Friend / recipient"
+              placeholderTextColor="#6b7280"
+              style={styles.input}
+            />
+            <TextInput
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="numeric"
+              placeholder="Amount"
+              placeholderTextColor="#6b7280"
+              style={styles.input}
+            />
+            <TextInput
+              value={reason}
+              onChangeText={setReason}
+              placeholder="Reason"
+              placeholderTextColor="#6b7280"
+              style={styles.input}
+            />
+
+            <TouchableOpacity onPress={handleSave} style={styles.primaryButton}>
+              <Text style={styles.primaryButtonText}>Save record</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setShowForm(false)}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
         )}
-      </View>
-    </>
+
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>History</Text>
+          {friendTransactions.length === 0 ? (
+            <Text style={styles.emptyText}>No borrow or give history yet.</Text>
+          ) : (
+            friendTransactions.map((item) => (
+              <View key={item.id} style={styles.historyRow}>
+                <View style={styles.historyTextWrap}>
+                  <Text style={styles.historyTitle}>
+                    {item.recipient || 'Friend'}
+                  </Text>
+                  <Text style={styles.historyMeta}>
+                    {item.type}
+                    {item.note ? ` · ${item.note}` : ''}
+                  </Text>
+                </View>
+                <View style={styles.historyRight}>
+                  <Text
+                    style={[
+                      styles.historyAmount,
+                      item.type === 'Borrowed'
+                        ? styles.borrowedColor
+                        : styles.givenColor,
+                    ]}
+                  >
+                    {item.type === 'Borrowed' ? '+' : '-'}
+                    {formatCurrency(item.amount)}
+                  </Text>
+                  <TouchableOpacity onPress={() => removeTransaction(item.id)}>
+                    <Text style={styles.deleteText}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  userBanner: {
-    backgroundColor: '#1f1f1f',
-    borderRadius: 20,
-    padding: 18,
-    marginBottom: 20,
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
   },
-  welcomeText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  welcomeSubText: {
-    color: '#bbb',
-    fontSize: 14,
-  },
-  cardSummary: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 20,
+  content: {
     padding: 20,
-    marginBottom: 20,
+    paddingBottom: 100,
+  },
+  heroCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 28,
+    padding: 24,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  heroTitle: {
+    color: colors.text,
+    fontSize: 28,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  heroText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  summaryCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   summaryBlock: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   summaryLabel: {
-    color: '#999',
-    fontSize: 14,
-    marginBottom: 6,
+    color: colors.textMuted,
+    fontSize: 13,
+    marginBottom: 5,
   },
   summaryValue: {
-    color: '#fff',
     fontSize: 22,
     fontWeight: '700',
   },
-  borrowedText: {
-    color: '#93c5fd',
+  borrowedColor: {
+    color: colors.accent,
   },
-  givenText: {
-    color: '#fbbf24',
+  givenColor: {
+    color: colors.warning,
   },
-  borrowPositive: {
-    color: '#4ade80',
+  positiveNet: {
+    color: colors.success,
   },
-  borrowNegative: {
-    color: '#f87171',
+  negativeNet: {
+    color: colors.dangerSoft,
   },
-  recipientSummary: {
-    marginBottom: 20,
+  sectionCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  sectionLabel: {
-    color: '#fff',
+  sectionTitle: {
+    color: colors.text,
     fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 12,
+    fontWeight: '700',
+    marginBottom: 14,
   },
-  recipientCard: {
-    backgroundColor: '#1f1f1f',
+  emptyText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  friendRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceAlt,
     borderRadius: 18,
     padding: 16,
-    marginBottom: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  recipientName: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  recipientNet: {
+  friendName: {
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 4,
   },
-  recipientMeta: {
-    color: '#777',
-    fontSize: 13,
+  friendMeta: {
+    color: colors.textMuted,
+    fontSize: 12,
   },
-  emptyText: {
-    color: '#888',
-    fontSize: 15,
-    marginTop: 10,
-  },
-  fabSection: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  fabButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#2563eb',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  fabIcon: {
-    color: '#fff',
-    fontSize: 34,
-    lineHeight: 36,
-    fontWeight: '700',
-  },
-  fabLabel: {
-    color: '#fff',
-    marginTop: 10,
-    fontSize: 14,
-  },
-  formSection: {
-    marginBottom: 24,
-  },
-  optionRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 12,
-  },
-  optionButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: '#272727',
-    borderWidth: 1,
-    borderColor: '#272727',
-    marginRight: 10,
-    marginBottom: 10,
-  },
-  selectedButton: {
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
-  },
-  optionText: {
-    color: '#ddd',
-    fontWeight: '600',
-  },
-  selectedText: {
-    color: '#fff',
-  },
-  input: {
-    backgroundColor: '#1f1f1f',
-    borderRadius: 14,
-    color: '#fff',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  formActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 10,
-  },
-  buttonSpacing: {
-    marginRight: 10,
-  },
-  addButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 16,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  addButtonText: {
-    color: '#fff',
+  friendNet: {
     fontSize: 16,
     fontWeight: '700',
   },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: '#272727',
-    borderRadius: 16,
-    paddingVertical: 14,
+  primaryButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 18,
+    paddingVertical: 16,
     alignItems: 'center',
+    marginBottom: 16,
   },
-  cancelButtonText: {
-    color: '#fff',
+  primaryButtonText: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    marginBottom: 14,
+  },
+  toggleButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  toggleButtonActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  toggleText: {
+    color: colors.textSoft,
+    fontWeight: '600',
+  },
+  toggleTextActive: {
+    color: colors.text,
+  },
+  input: {
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: colors.text,
+    marginBottom: 14,
+  },
+  secondaryButton: {
+    borderRadius: 18,
+    paddingVertical: 15,
+    alignItems: 'center',
+    backgroundColor: colors.surfaceMuted,
+    marginTop: -4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  secondaryButtonText: {
+    color: colors.textSoft,
     fontWeight: '700',
   },
-  listSection: {
-    marginBottom: 20,
+  historyRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  historyTextWrap: {
+    flex: 1,
+    paddingRight: 16,
+  },
+  historyTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  historyMeta: {
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  historyRight: {
+    alignItems: 'flex-end',
+  },
+  historyAmount: {
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  deleteText: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
-
-export default FriendScreen;

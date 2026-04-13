@@ -1,16 +1,26 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
-// Import screens
+import AuthScreen from '../screens/AuthScreen';
 import HomeScreen from '../screens/HomeScreen';
 import ExpenseScreen from '../screens/ExpenseScreen';
 import FriendScreen from '../screens/FriendScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import colors from '../theme/colors';
 
 const Tab = createBottomTabNavigator();
+const Stack = createNativeStackNavigator();
 
-export default function AppNavigator({ transactions, setTransactions }) {
+function MainTabs({
+  currentUser,
+  transactions,
+  addTransaction,
+  removeTransaction,
+  clearTransactions,
+  cloudStatus,
+}) {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -32,11 +42,12 @@ export default function AppNavigator({ transactions, setTransactions }) {
           return <Ionicons name={iconName} size={size} color={color} />;
         },
 
-        tabBarActiveTintColor: '#007AFF',
-        tabBarInactiveTintColor: 'gray',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textMuted,
 
         tabBarStyle: {
-          backgroundColor: '#fff',
+          backgroundColor: colors.surfaceMuted,
+          borderTopColor: colors.border,
           height: 60,
           paddingBottom: 5,
           paddingTop: 5,
@@ -51,7 +62,7 @@ export default function AppNavigator({ transactions, setTransactions }) {
         {() => (
           <HomeScreen
             transactions={transactions}
-            setTransactions={setTransactions}
+            removeTransaction={removeTransaction}
           />
         )}
       </Tab.Screen>
@@ -60,7 +71,8 @@ export default function AppNavigator({ transactions, setTransactions }) {
         {() => (
           <ExpenseScreen
             transactions={transactions}
-            setTransactions={setTransactions}
+            addTransaction={addTransaction}
+            removeTransaction={removeTransaction}
           />
         )}
       </Tab.Screen>
@@ -69,14 +81,56 @@ export default function AppNavigator({ transactions, setTransactions }) {
         {() => (
           <FriendScreen
             transactions={transactions}
-            setTransactions={setTransactions}
+            addTransaction={addTransaction}
+            removeTransaction={removeTransaction}
           />
         )}
       </Tab.Screen>
 
       <Tab.Screen name="Profile">
-        {() => <ProfileScreen />}
+        {() => (
+          <ProfileScreen
+            currentUser={currentUser}
+            transactions={transactions}
+            clearTransactions={clearTransactions}
+            cloudStatus={cloudStatus}
+          />
+        )}
       </Tab.Screen>
     </Tab.Navigator>
+  );
+}
+
+export default function AppNavigator({
+  currentUser,
+  transactions,
+  addTransaction,
+  removeTransaction,
+  clearTransactions,
+  cloudStatus,
+}) {
+  if (currentUser) {
+    return (
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Main">
+          {() => (
+            <MainTabs
+              currentUser={currentUser}
+              transactions={transactions}
+              addTransaction={addTransaction}
+              removeTransaction={removeTransaction}
+              clearTransactions={clearTransactions}
+              cloudStatus={cloudStatus}
+            />
+          )}
+        </Stack.Screen>
+      </Stack.Navigator>
+    );
+  }
+
+  return (
+    <Stack.Navigator initialRouteName="Auth" screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="Auth" component={AuthScreen} />
+    </Stack.Navigator>
   );
 }
