@@ -2,135 +2,39 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-
 import AuthScreen from '../screens/AuthScreen';
 import HomeScreen from '../screens/HomeScreen';
-import ExpenseScreen from '../screens/ExpenseScreen';
-import FriendScreen from '../screens/FriendScreen';
+import AddTransactionScreen from '../screens/AddTransactionScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import LoadingScreen from '../screens/LoadingScreen';
+import ExchangeRatesScreen from '../screens/ExchangeRatesScreen';
 import colors from '../theme/colors';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-function MainTabs({
-  currentUser,
-  transactions,
-  addTransaction,
-  removeTransaction,
-  clearTransactions,
-  cloudStatus,
-}) {
-  return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-
-        tabBarIcon: ({ color, size, focused }) => {
-          let iconName;
-
-          if (route.name === 'Home') {
-            iconName = focused ? 'home' : 'home-outline';
-          } else if (route.name === 'Expenses') {
-            iconName = focused ? 'cash' : 'cash-outline';
-          } else if (route.name === 'Friends') {
-            iconName = focused ? 'people' : 'people-outline';
-          } else if (route.name === 'Profile') {
-            iconName = focused ? 'person' : 'person-outline';
-          }
-
-          return <Ionicons name={iconName} size={size} color={color} />;
-        },
-
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textMuted,
-
-        tabBarStyle: {
-          backgroundColor: colors.surfaceMuted,
-          borderTopColor: colors.border,
-          height: 60,
-          paddingBottom: 5,
-          paddingTop: 5,
-        },
-
-        tabBarLabelStyle: {
-          fontSize: 12,
-        },
-      })}
-    >
-      <Tab.Screen name="Home">
-        {() => (
-          <HomeScreen
-            transactions={transactions}
-            removeTransaction={removeTransaction}
-          />
-        )}
-      </Tab.Screen>
-
-      <Tab.Screen name="Expenses">
-        {() => (
-          <ExpenseScreen
-            transactions={transactions}
-            addTransaction={addTransaction}
-            removeTransaction={removeTransaction}
-          />
-        )}
-      </Tab.Screen>
-
-      <Tab.Screen name="Friends">
-        {() => (
-          <FriendScreen
-            transactions={transactions}
-            addTransaction={addTransaction}
-            removeTransaction={removeTransaction}
-          />
-        )}
-      </Tab.Screen>
-
-      <Tab.Screen name="Profile">
-        {() => (
-          <ProfileScreen
-            currentUser={currentUser}
-            transactions={transactions}
-            clearTransactions={clearTransactions}
-            cloudStatus={cloudStatus}
-          />
-        )}
-      </Tab.Screen>
-    </Tab.Navigator>
-  );
+function MainTabs({ currentUser, transactions, addTransaction, updateTransaction, settleTransaction, removeTransaction, clearTransactions, cloudStatus }) {
+  return <Tab.Navigator screenOptions={({ route }) => ({
+    headerShown: false,
+    tabBarActiveTintColor: colors.primarySoft,
+    tabBarInactiveTintColor: colors.textMuted,
+    tabBarStyle: { backgroundColor: '#151120', borderTopColor: colors.border, height: 70, paddingTop: 8, paddingBottom: 10 },
+    tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
+    tabBarIcon: ({ color, size, focused }) => {
+      const icons = { Home: focused ? 'home' : 'home-outline', Add: 'add', Profile: focused ? 'person' : 'person-outline' };
+      return <Ionicons name={icons[route.name]} size={route.name === 'Add' ? 27 : size} color={route.name === 'Add' ? colors.text : color} />;
+    },
+    tabBarIconStyle: route.name === 'Add' ? { marginTop: -27, backgroundColor: colors.primary, width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', borderWidth: 5, borderColor: colors.background } : undefined,
+    tabBarLabel: route.name === 'Add' ? () => null : undefined,
+  })}>
+    <Tab.Screen name="Home">{({ navigation, route }) => <HomeScreen transactions={transactions} updateTransaction={updateTransaction} settleTransaction={settleTransaction} removeTransaction={removeTransaction} navigation={navigation} route={route} />}</Tab.Screen>
+    <Tab.Screen name="Add">{({ navigation }) => <AddTransactionScreen addTransaction={addTransaction} navigation={navigation} />}</Tab.Screen>
+    <Tab.Screen name="Profile">{() => <ProfileScreen currentUser={currentUser} transactions={transactions} clearTransactions={clearTransactions} cloudStatus={cloudStatus} />}</Tab.Screen>
+  </Tab.Navigator>;
 }
 
-export default function AppNavigator({
-  currentUser,
-  transactions,
-  addTransaction,
-  removeTransaction,
-  clearTransactions,
-  cloudStatus,
-}) {
-  if (currentUser) {
-    return (
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Main">
-          {() => (
-            <MainTabs
-              currentUser={currentUser}
-              transactions={transactions}
-              addTransaction={addTransaction}
-              removeTransaction={removeTransaction}
-              clearTransactions={clearTransactions}
-              cloudStatus={cloudStatus}
-            />
-          )}
-        </Stack.Screen>
-      </Stack.Navigator>
-    );
-  }
-
-  return (
-    <Stack.Navigator initialRouteName="Auth" screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="Auth" component={AuthScreen} />
-    </Stack.Navigator>
-  );
+export default function AppNavigator(props) {
+  if (props.currentUser && props.isPostLoginLoading) return <LoadingScreen onComplete={props.completePostLoginLoading} />;
+  if (props.currentUser) return <Stack.Navigator screenOptions={{ headerShown: false }}><Stack.Screen name="Main">{() => <MainTabs {...props} />}</Stack.Screen><Stack.Screen name="ExchangeRates" component={ExchangeRatesScreen} options={{ headerShown: true, title: '', headerStyle: { backgroundColor: colors.background }, headerTintColor: colors.text, headerShadowVisible: false }}/></Stack.Navigator>;
+  return <Stack.Navigator initialRouteName="Auth" screenOptions={{ headerShown: false }}><Stack.Screen name="Auth" component={AuthScreen} /></Stack.Navigator>;
 }

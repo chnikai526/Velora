@@ -1,0 +1,17 @@
+export const SET_CURRENT_USER = 'auth/SET_CURRENT_USER';
+export const START_POST_LOGIN_LOADING = 'auth/START_POST_LOGIN_LOADING';
+export const FINISH_POST_LOGIN_LOADING = 'auth/FINISH_POST_LOGIN_LOADING';
+export const SET_TRANSACTIONS = 'transactions/SET_TRANSACTIONS';
+export const ADD_TRANSACTION = 'transactions/ADD_TRANSACTION';
+export const UPDATE_TRANSACTION = 'transactions/UPDATE_TRANSACTION';
+export const REMOVE_TRANSACTION = 'transactions/REMOVE_TRANSACTION';
+export const CLEAR_TRANSACTIONS = 'transactions/CLEAR_TRANSACTIONS';
+export const SET_CLOUD_DATA_LOADING = 'transactions/SET_CLOUD_DATA_LOADING';
+export const SETTLE_TRANSACTION = 'transactions/SETTLE_TRANSACTION';
+export const REQUEST_EXCHANGE_RATES = 'exchange/REQUEST_EXCHANGE_RATES';
+export const RECEIVE_EXCHANGE_RATES = 'exchange/RECEIVE_EXCHANGE_RATES';
+export const FAIL_EXCHANGE_RATES = 'exchange/FAIL_EXCHANGE_RATES';
+export const SET_CONVERTER_AMOUNT = 'exchange/SET_CONVERTER_AMOUNT';
+export const SET_FROM_CURRENCY = 'exchange/SET_FROM_CURRENCY';
+export const SET_TO_CURRENCY = 'exchange/SET_TO_CURRENCY';
+export const SWAP_CURRENCIES = 'exchange/SWAP_CURRENCIES';

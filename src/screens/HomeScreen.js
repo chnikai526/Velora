@@ -1,550 +1,95 @@
-import React from 'react';
-import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import Svg, { Circle } from 'react-native-svg';
+import SpendingCat from '../components/SpendingCat';
+import TransactionFormModal from '../components/TransactionFormModal';
+import CurrentBalanceCard from '../components/CurrentBalanceCard';
+import CurrencyConverterCard from '../components/CurrencyConverterCard';
 import colors from '../theme/colors';
 
-const formatCurrency = (value) => `$${value.toFixed(2)}`;
+const chartColors = ['#7184ff', '#ff5f7c', '#ffad4d', '#9c69e8', '#45c8a0', '#5d9cec'];
+const money = (value) => `$${value.toFixed(2)}`;
 
-const getRelativeLabel = (isoDate) => {
-  const diffMs = Date.now() - new Date(isoDate).getTime();
-  const diffHours = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60)));
-
-  if (diffHours < 1) {
-    return 'Just now';
-  }
-
-  if (diffHours < 24) {
-    return `${diffHours}h ago`;
-  }
-
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
+const isInCurrentMonth = (item) => {
+  const date = new Date(item.date || item.createdAt);
+  const now = new Date();
+  return date >= new Date(now.getFullYear(), now.getMonth(), 1) && date <= now;
 };
 
-export default function HomeScreen({ transactions, removeTransaction }) {
-  const incomeTotal = transactions
-    .filter((item) => item.type === 'Income')
-    .reduce((sum, item) => sum + item.amount, 0);
-  const expenseTotal = transactions
-    .filter((item) => item.type === 'Expense')
-    .reduce((sum, item) => sum + item.amount, 0);
-  const borrowedTotal = transactions
-    .filter((item) => item.type === 'Borrowed')
-    .reduce((sum, item) => sum + item.amount, 0);
-  const givenTotal = transactions
-    .filter((item) => item.type === 'Given')
-    .reduce((sum, item) => sum + item.amount, 0);
-  const balance = incomeTotal - expenseTotal - givenTotal + borrowedTotal;
-
-  const expenseByCategory = transactions
-    .filter((item) => item.type === 'Expense')
-    .reduce((groups, item) => {
-      const key = item.category || 'Other';
-      groups[key] = (groups[key] || 0) + item.amount;
-      return groups;
-    }, {});
-
-  const topCategories = Object.entries(expenseByCategory)
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 4);
-
-  const recentTransactions = transactions.slice(0, 5);
-  const overviewItems = [
-    {
-      key: 'income',
-      label: 'Income',
-      value: incomeTotal,
-      softBackground: '#2a3328',
-    },
-    {
-      key: 'expense',
-      label: 'Expense',
-      value: expenseTotal,
-      softBackground: '#392520',
-    },
-    {
-      key: 'given',
-      label: 'Given',
-      value: givenTotal,
-      softBackground: '#3a2c1d',
-    },
-    {
-      key: 'borrowed',
-      label: 'Borrowed',
-      value: borrowedTotal,
-      softBackground: '#33241c',
-    },
-  ];
-
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.eyebrow}>Velora dashboard</Text>
-            <Text style={styles.headerTitle}>Money snapshot</Text>
-          </View>
-          <View style={styles.headerBadge}>
-            <Text style={styles.headerBadgeText}>{transactions.length} items</Text>
-          </View>
-        </View>
-
-        <View style={styles.balanceDeck}>
-          <View style={styles.mainBalanceCard}>
-            <Text style={styles.balanceLabel}>Available balance</Text>
-            <Text style={styles.balanceValue}>{formatCurrency(balance)}</Text>
-            <Text style={styles.balanceMeta}>
-              Income - expenses - money given + money borrowed
-            </Text>
-
-            <View style={styles.balanceFootRow}>
-              <View style={styles.balanceFootChip}>
-                <Text style={styles.balanceFootChipLabel}>Spent</Text>
-                <Text style={styles.balanceFootChipValue}>
-                  {formatCurrency(expenseTotal)}
-                </Text>
-              </View>
-              <View style={styles.balanceFootChip}>
-                <Text style={styles.balanceFootChipLabel}>Shared</Text>
-                <Text style={styles.balanceFootChipValue}>
-                  {formatCurrency(givenTotal + borrowedTotal)}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.balanceSideRow}>
-            <View style={styles.sideCard}>
-              <Text style={styles.sideCardLabel}>Income flow</Text>
-              <Text style={styles.sideCardValue}>{formatCurrency(incomeTotal)}</Text>
-              <Text style={styles.sideCardMeta}>Cash coming in</Text>
-            </View>
-
-            <View style={styles.sideCard}>
-              <Text style={styles.sideCardLabel}>Shared money</Text>
-              <Text style={styles.sideCardValue}>
-                {formatCurrency(borrowedTotal - givenTotal)}
-              </Text>
-              <Text style={styles.sideCardMeta}>Net with friends</Text>
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.gridRow}>
-          {overviewItems.map((item) => (
-            <View
-              key={item.key}
-              style={[styles.miniStatCard, { backgroundColor: item.softBackground }]}
-            >
-              <Text style={styles.miniStatLabel}>{item.label}</Text>
-              <Text style={styles.miniStatValue}>{formatCurrency(item.value)}</Text>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.analyticsCard}>
-          <View style={styles.sectionHeader}>
-            <View>
-              <Text style={styles.sectionEyebrow}>Expenses</Text>
-              <Text style={styles.sectionTitle}>Top categories</Text>
-            </View>
-            <Text style={styles.sectionMeta}>Live split</Text>
-          </View>
-
-          {topCategories.length === 0 ? (
-            <Text style={styles.emptyText}>
-              Add an expense to start building category cards.
-            </Text>
-          ) : (
-            topCategories.map(([category, total]) => {
-              const percentage = expenseTotal > 0 ? (total / expenseTotal) * 100 : 0;
-
-              return (
-                <View key={category} style={styles.categoryCard}>
-                  <View style={styles.categoryTopRow}>
-                    <Text style={styles.categoryName}>{category}</Text>
-                    <Text style={styles.categoryAmount}>{formatCurrency(total)}</Text>
-                  </View>
-                  <Text style={styles.categoryShare}>
-                    {Math.round(percentage)}% of all expenses
-                  </Text>
-                  <View style={styles.progressTrack}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        { width: `${Math.max(12, Math.min(percentage, 100))}%` },
-                      ]}
-                    />
-                  </View>
-                </View>
-              );
-            })
-          )}
-        </View>
-
-        <View style={styles.analyticsCard}>
-          <View style={styles.sectionHeader}>
-            <View>
-              <Text style={styles.sectionEyebrow}>Feed</Text>
-              <Text style={styles.sectionTitle}>Recent activity</Text>
-            </View>
-            <Text style={styles.sectionMeta}>Latest 5</Text>
-          </View>
-
-          {recentTransactions.length === 0 ? (
-            <Text style={styles.emptyText}>
-              No transactions yet. Add one from Expenses or Friends.
-            </Text>
-          ) : (
-            recentTransactions.map((item) => (
-              <View key={item.id} style={styles.transactionCard}>
-                <View style={styles.transactionLeft}>
-                  <View style={styles.transactionAvatar}>
-                    <Text style={styles.transactionAvatarText}>
-                      {(item.recipient || item.category || item.type).slice(0, 1)}
-                    </Text>
-                  </View>
-                  <View style={styles.transactionTextWrap}>
-                    <Text style={styles.transactionTitle}>
-                      {item.recipient || item.category || item.note || item.type}
-                    </Text>
-                    <Text style={styles.transactionMeta}>
-                      {item.type} · {getRelativeLabel(item.createdAt)}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.transactionRight}>
-                  <Text
-                    style={[
-                      styles.transactionAmount,
-                      item.type === 'Income' || item.type === 'Borrowed'
-                        ? styles.positiveAmount
-                        : styles.negativeAmount,
-                    ]}
-                  >
-                    {item.type === 'Income' || item.type === 'Borrowed' ? '+' : '-'}
-                    {formatCurrency(item.amount)}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => removeTransaction(item.id)}
-                    style={styles.deleteButton}
-                  >
-                    <Text style={styles.deleteButtonText}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  );
+function ExpenseDonut({ groups, total }) {
+  const radius = 48;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  if (!total) return <View style={styles.emptyDonut}><Text style={styles.emptyDonutText}>No expenses{`\n`}yet</Text></View>;
+  return <View style={styles.donutWrap}><Svg width={132} height={132} viewBox="0 0 120 120"><Circle cx="60" cy="60" r={radius} stroke={colors.surfaceMuted} strokeWidth="15" fill="none" />{groups.map(([name, value], index) => { const length = (value / total) * circumference; const segment = <Circle key={name} cx="60" cy="60" r={radius} stroke={chartColors[index % chartColors.length]} strokeWidth="15" fill="none" strokeLinecap="butt" strokeDasharray={`${Math.max(length - 2, 0)} ${circumference - Math.max(length - 2, 0)}`} strokeDashoffset={-offset} rotation="-90" origin="60, 60" />; offset += length; return segment; })}</Svg><View style={styles.donutCenter}><Text style={styles.donutCenterLabel}>Spent</Text><Text style={styles.donutCenterValue}>{money(total)}</Text></View></View>;
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    padding: 20,
-    paddingBottom: 110,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 18,
-  },
-  eyebrow: {
-    color: colors.accent,
-    textTransform: 'uppercase',
-    letterSpacing: 1.4,
-    fontSize: 12,
-    marginBottom: 8,
-  },
-  headerTitle: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: '700',
-  },
-  headerBadge: {
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  headerBadgeText: {
-    color: colors.textSoft,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  balanceDeck: {
-    marginBottom: 18,
-  },
-  mainBalanceCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 30,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 24,
-    minHeight: 220,
-    justifyContent: 'space-between',
-    shadowColor: '#000000',
-    shadowOpacity: 0.22,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 8,
-    marginBottom: 12,
-  },
-  balanceSideRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  sideCard: {
-    flex: 1,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-  },
-  sideCardLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginBottom: 8,
-  },
-  sideCardValue: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  sideCardMeta: {
-    color: colors.textMuted,
-    fontSize: 11,
-    lineHeight: 16,
-  },
-  balanceLabel: {
-    color: colors.textMuted,
-    fontSize: 13,
-    marginBottom: 10,
-  },
-  balanceValue: {
-    color: colors.text,
-    fontSize: 38,
-    fontWeight: '800',
-    marginBottom: 10,
-    maxWidth: '100%',
-  },
-  balanceMeta: {
-    color: colors.textMuted,
-    fontSize: 13,
-    lineHeight: 20,
-    maxWidth: '100%',
-  },
-  balanceFootRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 20,
-    maxWidth: '100%',
-  },
-  balanceFootChip: {
-    flex: 1,
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 14,
-  },
-  balanceFootChipLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginBottom: 6,
-  },
-  balanceFootChipValue: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  gridRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 18,
-  },
-  miniStatCard: {
-    width: '48%',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-  },
-  miniStatLabel: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginBottom: 6,
-  },
-  miniStatValue: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  analyticsCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 22,
-    marginBottom: 18,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 18,
-  },
-  sectionEyebrow: {
-    color: colors.accent,
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 1.2,
-    marginBottom: 6,
-  },
-  sectionTitle: {
-    color: colors.text,
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  sectionMeta: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginTop: 18,
-  },
-  emptyText: {
-    color: colors.textMuted,
-    fontSize: 14,
-    lineHeight: 22,
-  },
-  categoryCard: {
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-    marginBottom: 12,
-  },
-  categoryTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  categoryName: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  categoryAmount: {
-    color: colors.textSoft,
-    fontSize: 14,
-  },
-  categoryShare: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginBottom: 12,
-  },
-  progressTrack: {
-    height: 9,
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 999,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.primarySoft,
-    borderRadius: 999,
-  },
-  transactionCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 14,
-    marginBottom: 12,
-  },
-  transactionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    paddingRight: 16,
-  },
-  transactionAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 999,
-    backgroundColor: colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: colors.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  transactionAvatarText: {
-    color: colors.accent,
-    fontSize: 15,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  transactionTextWrap: {
-    flex: 1,
-  },
-  transactionTitle: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  transactionMeta: {
-    color: colors.textMuted,
-    fontSize: 12,
-  },
-  transactionRight: {
-    alignItems: 'flex-end',
-  },
-  transactionAmount: {
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  positiveAmount: {
-    color: colors.success,
-  },
-  negativeAmount: {
-    color: colors.dangerSoft,
-  },
-  deleteButton: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  deleteButtonText: {
-    color: colors.textSoft,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-});
+export default function HomeScreen({ transactions, updateTransaction, settleTransaction, removeTransaction, navigation, route }) {
+  const savedTransaction = route?.params?.savedTransaction;
+  const [editingTransaction, setEditingTransaction] = useState(null);
+
+  useEffect(() => {
+    if (!savedTransaction) {
+      return undefined;
+    }
+
+    const timeout = setTimeout(() => {
+      navigation.setParams({ savedTransaction: undefined });
+    }, 10000);
+
+    return () => clearTimeout(timeout);
+  }, [navigation, savedTransaction]);
+  const { currentBalance, monthExpenses, income, expenses, friendCashflow, groups } = useMemo(() => {
+    const month = transactions.filter(isInCurrentMonth);
+    const monthExpenses = month.filter((item) => item.type === 'Expense');
+    const income = month.filter((item) => item.type === 'Income').reduce((sum, item) => sum + item.amount, 0);
+    const expenses = monthExpenses.reduce((sum, item) => sum + item.amount, 0);
+    const groupMap = monthExpenses.reduce((all, item) => ({ ...all, [item.category || 'Other']: (all[item.category || 'Other'] || 0) + item.amount }), {});
+    const activeFriendTransactions = month.filter(
+      (item) =>
+        (item.type === 'Borrowed' || item.type === 'Given') &&
+        item.status !== 'settled'
+    );
+    const friendCashflow = activeFriendTransactions.filter((item) => item.type === 'Borrowed').reduce((sum, item) => sum + item.amount, 0) - activeFriendTransactions.filter((item) => item.type === 'Given').reduce((sum, item) => sum + item.amount, 0);
+    const totalIncome = transactions.filter((item) => item.type === 'Income').reduce((sum, item) => sum + item.amount, 0);
+    const totalExpenses = transactions.filter((item) => item.type === 'Expense').reduce((sum, item) => sum + item.amount, 0);
+    const totalFriendCashflow = transactions.filter((item) => (item.type === 'Borrowed' || item.type === 'Given') && item.status !== 'settled').reduce((sum, item) => sum + (item.type === 'Borrowed' ? item.amount : -item.amount), 0);
+    return { currentBalance: totalIncome - totalExpenses + totalFriendCashflow, monthExpenses: monthExpenses.sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt)), income, expenses, savings: income - expenses, friendCashflow, groups: Object.entries(groupMap).sort(([, a], [, b]) => b - a) };
+  }, [transactions]);
+  const firstDay = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date());
+  const activeFriendTransactions = transactions.filter((item) => (item.type === 'Borrowed' || item.type === 'Given') && item.status !== 'settled');
+  const confirmRemove = (transaction) => {
+    Alert.alert('Delete transaction?', `Delete ${transaction.category || transaction.note || 'this transaction'} permanently?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => removeTransaction(transaction.id) },
+    ]);
+  };
+  const saveEdit = (entry) => {
+    const result = updateTransaction(editingTransaction.id, entry);
+    if (!result.ok) {
+      Alert.alert('Unable to save changes', result.message);
+      return;
+    }
+    setEditingTransaction(null);
+  };
+
+  return <SafeAreaView style={styles.safeArea}><ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <View style={styles.topRow}><View><Text style={styles.greeting}>Good day</Text><Text style={styles.title}>Your money overview</Text></View><View style={styles.avatar}><Text style={styles.avatarText}>V</Text></View></View>
+    {savedTransaction && <View style={styles.savedNotice}><Ionicons name="checkmark-circle" size={18} color={colors.success}/><Text style={styles.savedNoticeText}>Last {savedTransaction.type} Saved: {money(savedTransaction.amount)}</Text></View>}
+    <CurrentBalanceCard balance={currentBalance} />
+    <View style={styles.balanceCard}><Text style={styles.balanceLabel}>Spending overview</Text><Text style={styles.balanceValue}>{money(expenses)}</Text><Text style={styles.balanceCopy}>{firstDay} 1 – today</Text><SpendingCat expenses={expenses} income={income} friendCashflow={friendCashflow} /></View>
+    <View style={styles.sectionHead}><Text style={styles.sectionTitle}>This month’s expenses</Text><Text style={styles.sectionMeta}>{monthExpenses.length} entries</Text></View>
+    <View style={styles.analyticsCard}><ExpenseDonut groups={groups} total={expenses}/><View style={styles.legend}>{groups.slice(0, 4).map(([name, value], index)=><View key={name} style={styles.legendRow}><View style={[styles.legendDot,{backgroundColor:chartColors[index]}]}/><Text style={styles.legendName}>{name}</Text><Text style={styles.legendValue}>{Math.round((value / expenses) * 100)}%</Text></View>)}{groups.length === 0 && <Text style={styles.legendEmpty}>Add an expense to see your breakdown.</Text>}</View></View>
+    
+    <View style={styles.sectionHead}><View><Text style={styles.sectionTitle}>Expenses</Text><Text style={styles.sectionSub}>From the 1st of {firstDay}</Text></View><Text style={styles.sectionMeta}>Current month</Text></View>
+    {monthExpenses.length === 0 ? <View style={styles.emptyState}><Ionicons name="receipt-outline" size={30} color={colors.primarySoft}/><Text style={styles.emptyTitle}>No expenses yet</Text><Text style={styles.emptyCopy}>Use the Add tab to record your first expense.</Text></View> : monthExpenses.map((item, index)=><View key={item.id} style={styles.transaction}><View style={[styles.transactionIcon,{backgroundColor:`${chartColors[index % chartColors.length]}22` }]}><Ionicons name="arrow-up" size={18} color={chartColors[index % chartColors.length]}/></View><View style={styles.transactionInfo}><Text style={styles.transactionName}>{item.category || item.note || 'Expense'}</Text><Text style={styles.transactionMeta}>{item.paymentMethod || 'Payment'} · {new Date(item.date || item.createdAt).toLocaleDateString()}</Text></View><View style={styles.transactionRight}><Text style={styles.transactionAmount}>-{money(item.amount)}</Text><View style={styles.transactionActions}><TouchableOpacity onPress={() => setEditingTransaction(item)}><Text style={styles.edit}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={() => confirmRemove(item)}><Text style={styles.remove}>Remove</Text></TouchableOpacity></View></View></View>)}
+    <View style={styles.sectionHead}><View><Text style={styles.sectionTitle}>Borrowed & Lent</Text><Text style={styles.sectionSub}>Open balances with friends</Text></View><Text style={styles.sectionMeta}>{activeFriendTransactions.length} active</Text></View>
+    {activeFriendTransactions.length === 0 ? <View style={styles.emptyState}><Ionicons name="people-outline" size={30} color={colors.primarySoft}/><Text style={styles.emptyTitle}>No open friend balances</Text><Text style={styles.emptyCopy}>Use Friend in the Add tab to track money borrowed or lent.</Text></View> : activeFriendTransactions.map((item) => <View key={item.id} style={styles.transaction}><View style={styles.transactionIcon}><Ionicons name="people" size={18} color={colors.primarySoft}/></View><View style={styles.transactionInfo}><Text style={styles.transactionName}>{item.type === 'Borrowed' ? `You owe ${item.recipient || 'a friend'}` : `${item.recipient || 'A friend'} owes you`}</Text><Text style={styles.transactionMeta}>Created {new Date(item.date || item.createdAt).toLocaleDateString()}</Text></View><View style={styles.transactionRight}><Text style={styles.transactionAmount}>{money(item.amount)}</Text><View style={styles.transactionActions}><TouchableOpacity onPress={() => setEditingTransaction(item)}><Text style={styles.edit}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={() => settleTransaction(item.id)}><Text style={styles.settled}>Mark settled</Text></TouchableOpacity></View></View></View>)}
+    <TransactionFormModal visible={Boolean(editingTransaction)} transaction={editingTransaction} onClose={() => setEditingTransaction(null)} onSave={saveEdit} />
+    <CurrencyConverterCard />
+  </ScrollView></SafeAreaView>;
+}
+
+const styles=StyleSheet.create({safeArea:{flex:1,backgroundColor:colors.background},content:{padding:20,paddingBottom:110},topRow:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginTop:10,marginBottom:20},greeting:{color:colors.textMuted,fontSize:14,marginBottom:4},title:{color:colors.text,fontSize:27,fontWeight:'800'},avatar:{width:42,height:42,borderRadius:21,backgroundColor:colors.primary,justifyContent:'center',alignItems:'center'},avatarText:{color:colors.text,fontWeight:'800',fontSize:16},savedNotice:{flexDirection:'row',alignItems:'center',gap:8,backgroundColor:colors.surface,marginBottom:16,padding:13,borderRadius:16,borderWidth:1,borderColor:colors.success},savedNoticeText:{color:colors.textSoft,fontSize:13,fontWeight:'700'},balanceCard:{overflow:'hidden',backgroundColor:'#3f2873',borderRadius:26,padding:22,marginBottom:24},balanceLabel:{color:'#e1cfbf',fontSize:14},balanceValue:{color:'#e1cfbf',fontSize:37,fontWeight:'800',marginTop:5,marginBottom:6},balanceCopy:{color:'#e1cfbf',fontSize:12},sectionHead:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:12},sectionTitle:{color:colors.text,fontSize:19,fontWeight:'800'},sectionSub:{color:colors.textMuted,fontSize:12,marginTop:3},sectionMeta:{color:colors.primarySoft,fontSize:12,fontWeight:'700'},analyticsCard:{backgroundColor:colors.surface,borderRadius:24,borderWidth:1,borderColor:colors.border,padding:17,flexDirection:'row',alignItems:'center',marginBottom:25},donutWrap:{width:135,height:135,justifyContent:'center',alignItems:'center'},donutCenter:{position:'absolute',alignItems:'center'},donutCenterLabel:{color:colors.textMuted,fontSize:10},donutCenterValue:{color:colors.text,fontSize:13,fontWeight:'800',marginTop:3},emptyDonut:{width:105,height:105,borderRadius:53,borderWidth:14,borderColor:colors.surfaceMuted,justifyContent:'center',alignItems:'center'},emptyDonutText:{color:colors.textMuted,fontSize:11,textAlign:'center'},legend:{flex:1,paddingLeft:12},legendRow:{flexDirection:'row',alignItems:'center',marginBottom:12},legendDot:{width:8,height:8,borderRadius:4,marginRight:8},legendName:{color:colors.textSoft,fontSize:12,flex:1},legendValue:{color:colors.text,fontSize:12,fontWeight:'700'},legendEmpty:{color:colors.textMuted,fontSize:12,lineHeight:18},emptyState:{alignItems:'center',backgroundColor:colors.surface,borderRadius:22,borderWidth:1,borderColor:colors.border,padding:30,marginBottom:22},emptyTitle:{color:colors.text,fontSize:17,fontWeight:'700',marginTop:10},emptyCopy:{color:colors.textMuted,fontSize:13,textAlign:'center',marginTop:6},transaction:{backgroundColor:colors.surface,borderRadius:19,borderColor:colors.border,borderWidth:1,padding:13,flexDirection:'row',alignItems:'center',marginBottom:10},transactionIcon:{width:40,height:40,borderRadius:14,alignItems:'center',justifyContent:'center',marginRight:11,backgroundColor:colors.surfaceMuted},transactionInfo:{flex:1},transactionName:{color:colors.text,fontSize:14,fontWeight:'700',marginBottom:4},transactionMeta:{color:colors.textMuted,fontSize:11},transactionRight:{alignItems:'flex-end'},transactionAmount:{color:colors.dangerSoft,fontSize:14,fontWeight:'800',marginBottom:6},transactionActions:{flexDirection:'row',gap:10},edit:{color:colors.primarySoft,fontSize:11,fontWeight:'700'},settled:{color:colors.success,fontSize:11,fontWeight:'700'},remove:{color:colors.dangerSoft,fontSize:11,fontWeight:'700'}});

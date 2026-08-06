@@ -1,7 +1,9 @@
 import 'react-native-gesture-handler';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
+import { Provider, useDispatch, useSelector } from 'react-redux';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
   collection,
@@ -12,12 +14,24 @@ import {
 } from 'firebase/firestore';
 import AppNavigator from './src/navigation/AppNavigator';
 import {
+  addTransaction as addTransactionAction,
+  clearTransactions as clearTransactionsAction,
+  removeTransaction as removeTransactionAction,
+  setCloudDataLoading,
+  setCurrentUser,
+  setTransactions,
+  finishPostLoginLoading,
+  settleTransaction as settleTransactionAction,
+  updateTransaction as updateTransactionAction,
+} from './redux/Actions';
+import {
   backupFirebaseEnabled,
   getConfiguredDatabases,
   primaryAuth,
   primaryFirebaseEnabled,
 } from './src/lib/firebase';
 import colors from './src/theme/colors';
+import store from './redux/Store';
 
 const getTransactionsCollection = (db, userId) =>
   collection(db, 'users', userId, 'transactions');
@@ -36,6 +50,11 @@ const parseTransaction = (snapshot) => {
     category: data.category ?? '',
     recipient: data.recipient ?? '',
     type: data.type ?? 'Expense',
+    paymentMethod: data.paymentMethod ?? '',
+    recurring: Boolean(data.recurring),
+    status: data.status ?? 'active',
+    settledAt: data.settledAt ?? null,
+    date: data.date ?? data.createdAt ?? fallbackTimestamp,
     createdAt: data.createdAt ?? fallbackTimestamp,
   };
 };
@@ -99,10 +118,10 @@ const clearTransactionsFromCloud = async (userId) => {
   );
 };
 
-export default function App() {
-  const [transactions, setTransactions] = useState([]);
-  const [hasLoadedCloudData, setHasLoadedCloudData] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
+function VeloraApp() {
+  const dispatch = useDispatch();
+  const { currentUser, isPostLoginLoading } = useSelector((state) => state.auth);
+  const { hasLoadedCloudData, transactions } = useSelector((state) => state.transactions);
 
   useEffect(() => {
     if (!primaryAuth) {
@@ -110,24 +129,24 @@ export default function App() {
     }
 
     const unsubscribe = onAuthStateChanged(primaryAuth, (user) => {
-      setCurrentUser(user);
+      dispatch(setCurrentUser(user));
     });
 
     return unsubscribe;
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     let isMounted = true;
 
     const loadTransactions = async () => {
       if (isMounted) {
-        setHasLoadedCloudData(false);
+        dispatch(setCloudDataLoading(false));
       }
 
       if (!currentUser) {
         if (isMounted) {
-          setTransactions([]);
-          setHasLoadedCloudData(true);
+          dispatch(setTransactions([]));
+          dispatch(setCloudDataLoading(true));
         }
         return;
       }
@@ -136,8 +155,8 @@ export default function App() {
 
       if (databases.length === 0) {
         if (isMounted) {
-          setTransactions([]);
-          setHasLoadedCloudData(true);
+          dispatch(setTransactions([]));
+          dispatch(setCloudDataLoading(true));
         }
         return;
       }
@@ -156,8 +175,8 @@ export default function App() {
       }
 
       if (isMounted) {
-        setTransactions(mergeTransactions(transactionCollections));
-        setHasLoadedCloudData(true);
+        dispatch(setTransactions(mergeTransactions(transactionCollections)));
+        dispatch(setCloudDataLoading(true));
       }
     };
 
@@ -166,7 +185,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [currentUser]);
+  }, [currentUser, dispatch]);
 
   const addTransaction = (entry) => {
     if (!currentUser) {
@@ -179,6 +198,10 @@ export default function App() {
       return { ok: false, message: 'Enter a valid amount greater than 0.' };
     }
 
+    if ((entry.type === 'Borrowed' || entry.type === 'Given') && !entry.recipient?.trim()) {
+      return { ok: false, message: 'Enter your friend’s name.' };
+    }
+
     const normalizedTransaction = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       amount,
@@ -186,38 +209,90 @@ export default function App() {
       category: entry.category?.trim() ?? '',
       recipient: entry.recipient?.trim() ?? '',
       type: entry.type,
+      paymentMethod: entry.paymentMethod?.trim() ?? '',
+      recurring: Boolean(entry.recurring),
+      status: entry.status ?? 'active',
+      date: entry.date ?? new Date().toISOString(),
       createdAt: new Date().toISOString(),
     };
 
-    setTransactions((currentTransactions) => [
-      normalizedTransaction,
-      ...currentTransactions,
-    ]);
+    dispatch(addTransactionAction(normalizedTransaction));
     void syncTransactionToCloud(currentUser.uid, normalizedTransaction);
 
-    return { ok: true };
+    return { ok: true, transaction: normalizedTransaction };
   };
 
   const removeTransaction = (transactionId) => {
-    setTransactions((currentTransactions) =>
-      currentTransactions.filter((item) => item.id !== transactionId)
-    );
+    dispatch(removeTransactionAction(transactionId));
     void removeTransactionFromCloud(currentUser?.uid, transactionId);
   };
 
+  const updateTransaction = (transactionId, entry) => {
+    if (!currentUser) {
+      return { ok: false, message: 'Sign in before updating transactions.' };
+    }
+
+    const existingTransaction = transactions.find((item) => item.id === transactionId);
+    const amount = Number.parseFloat(entry.amount);
+
+    if (!existingTransaction) {
+      return { ok: false, message: 'This transaction no longer exists.' };
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return { ok: false, message: 'Enter a valid amount greater than 0.' };
+    }
+
+    if ((entry.type === 'Borrowed' || entry.type === 'Given') && !entry.recipient?.trim()) {
+      return { ok: false, message: 'Enter your friend’s name.' };
+    }
+
+    const updatedTransaction = {
+      ...existingTransaction,
+      amount,
+      note: entry.note?.trim() ?? '',
+      category: entry.category?.trim() ?? '',
+      recipient: entry.recipient?.trim() ?? '',
+      type: entry.type,
+      paymentMethod: entry.paymentMethod?.trim() ?? '',
+      recurring: Boolean(entry.recurring),
+      updatedAt: new Date().toISOString(),
+    };
+
+    dispatch(updateTransactionAction(updatedTransaction));
+    void syncTransactionToCloud(currentUser.uid, updatedTransaction);
+
+    return { ok: true, transaction: updatedTransaction };
+  };
+
   const clearTransactions = () => {
-    setTransactions([]);
+    dispatch(clearTransactionsAction());
     void clearTransactionsFromCloud(currentUser?.uid);
   };
 
+  const settleTransaction = (transactionId) => {
+    const transaction = transactions.find((item) => item.id === transactionId);
+    if (!transaction || !currentUser) return;
+    const settledTransaction = { ...transaction, status: 'settled', settledAt: new Date().toISOString() };
+    dispatch(settleTransactionAction(settledTransaction));
+    void syncTransactionToCloud(currentUser.uid, settledTransaction);
+  };
+
+  const completePostLoginLoading = useCallback(() => {
+    dispatch(finishPostLoginLoading());
+  }, [dispatch]);
+
   return (
     <View style={styles.shell}>
+      <StatusBar style="light" />
       <View style={styles.appFrame}>
         <NavigationContainer>
           <AppNavigator
             currentUser={currentUser}
             transactions={transactions}
             addTransaction={addTransaction}
+            updateTransaction={updateTransaction}
+            settleTransaction={settleTransaction}
             removeTransaction={removeTransaction}
             clearTransactions={clearTransactions}
             cloudStatus={{
@@ -225,6 +300,8 @@ export default function App() {
               primaryEnabled: primaryFirebaseEnabled,
               backupEnabled: backupFirebaseEnabled,
             }}
+            isPostLoginLoading={isPostLoginLoading}
+            completePostLoginLoading={completePostLoginLoading}
           />
         </NavigationContainer>
       </View>
@@ -232,18 +309,21 @@ export default function App() {
   );
 }
 
+export default function App() {
+  return (
+    <Provider store={store}>
+      <VeloraApp />
+    </Provider>
+  );
+}
+
 const styles = StyleSheet.create({
   shell: {
     flex: 1,
     backgroundColor: colors.background,
-    padding: 8,
   },
   appFrame: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 26,
-    overflow: 'hidden',
     backgroundColor: colors.background,
   },
 });

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
+  Image,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -18,6 +19,8 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import { primaryAuth } from '../lib/firebase';
+import { useDispatch } from 'react-redux';
+import { startPostLoginLoading } from '../../redux/Actions';
 import colors from '../theme/colors';
 
 const getAuthErrorMessage = (error) => {
@@ -35,7 +38,9 @@ const getAuthErrorMessage = (error) => {
     case 'auth/unauthorized-domain':
       return 'This domain is not allowed in Firebase Authentication yet.';
     case 'auth/invalid-credential':
+      return 'Your credentials are invalid. Please try signing in again.';
     case 'auth/invalid-email':
+      return 'The email address format looks wrong. Use a valid email like user@example.com.';
     case 'auth/user-not-found':
     case 'auth/wrong-password':
       return 'Your email or password is incorrect.';
@@ -67,19 +72,30 @@ const getAuthErrorDetail = (error) => {
   return `Firebase error: ${error.code}`;
 };
 
-export default function AuthScreen({ navigation }) {
+export default function AuthScreen() {
+  const dispatch = useDispatch();
   const [mode, setMode] = useState('login');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const isSignup = mode === 'signup';
   const isFirebaseReady = Boolean(primaryAuth);
 
+  const showError = (title, message) => {
+    setErrorMessage(message);
+    Alert.alert(title, message);
+  };
+
+  const clearError = () => setErrorMessage('');
+
   const handlePasswordReset = async () => {
+    clearError();
+
     if (!isFirebaseReady) {
-      Alert.alert(
+      showError(
         'Firebase not configured',
         'Add valid Firebase credentials in .env before resetting passwords.'
       );
@@ -89,7 +105,7 @@ export default function AuthScreen({ navigation }) {
     const normalizedEmail = email.trim().toLowerCase();
 
     if (!normalizedEmail) {
-      Alert.alert(
+      showError(
         'Email required',
         'Enter your email first, then tap Forgot password.'
       );
@@ -107,7 +123,7 @@ export default function AuthScreen({ navigation }) {
     } catch (error) {
       console.warn('Firebase password reset error:', error.code, error.message);
 
-      Alert.alert(
+      showError(
         'Unable to reset password',
         [getAuthErrorMessage(error), getAuthErrorDetail(error)]
           .filter(Boolean)
@@ -119,8 +135,10 @@ export default function AuthScreen({ navigation }) {
   };
 
   const handleSubmit = async () => {
+    clearError();
+
     if (!isFirebaseReady) {
-      Alert.alert(
+      showError(
         'Firebase not configured',
         'Add valid Firebase credentials in .env before signing in or creating an account.'
       );
@@ -130,12 +148,12 @@ export default function AuthScreen({ navigation }) {
     const normalizedEmail = email.trim().toLowerCase();
 
     if (!normalizedEmail || !password) {
-      Alert.alert('Missing fields', 'Enter your email and password first.');
+      showError('Missing fields', 'Enter your email and password first.');
       return;
     }
 
     if (isSignup && !fullName.trim()) {
-      Alert.alert('Missing name', 'Add your full name to create an account.');
+      showError('Missing name', 'Add your full name to create an account.');
       return;
     }
 
@@ -158,18 +176,20 @@ export default function AuthScreen({ navigation }) {
         await signInWithEmailAndPassword(primaryAuth, normalizedEmail, password);
       }
 
+      dispatch(startPostLoginLoading());
+
       setPassword('');
       if (isSignup) {
         setFullName('');
       }
     } catch (error) {
-      console.warn('Firebase Auth error:', error.code, error.message);
+      console.warn('Firebase Auth error:', error?.code, error?.message || error);
 
-      Alert.alert(
+      showError(
         isSignup ? 'Unable to create account' : 'Unable to sign in',
         [getAuthErrorMessage(error), getAuthErrorDetail(error)]
           .filter(Boolean)
-          .join('\n\n')
+          .join('\n\n') || (error?.message || String(error))
       );
     } finally {
       setIsSubmitting(false);
@@ -184,7 +204,10 @@ export default function AuthScreen({ navigation }) {
       >
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.hero}>
-            <Text style={styles.kicker}>Velora</Text>
+            <View style={styles.brandRow}>
+              <Image source={require('../../assets/icon.png')} style={styles.brandIcon} />
+              <Text style={styles.kicker}>Velora</Text>
+            </View>
             <Text style={styles.title}>
               {isSignup ? 'Create your money space.' : 'Welcome back.'}
             </Text>
@@ -226,7 +249,7 @@ export default function AuthScreen({ navigation }) {
                 value={fullName}
                 onChangeText={setFullName}
                 placeholder="Full name"
-                placeholderTextColor="#6b7280"
+                placeholderTextColor={colors.textMuted}
                 autoCorrect={false}
                 autoCapitalize="words"
                 textContentType="name"
@@ -238,7 +261,7 @@ export default function AuthScreen({ navigation }) {
               value={email}
               onChangeText={setEmail}
               placeholder="Email"
-              placeholderTextColor="#6b7280"
+              placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
               keyboardType="email-address"
               autoCorrect={false}
@@ -251,7 +274,7 @@ export default function AuthScreen({ navigation }) {
               value={password}
               onChangeText={setPassword}
               placeholder="Password"
-              placeholderTextColor="#6b7280"
+              placeholderTextColor={colors.textMuted}
               secureTextEntry
               autoCapitalize="none"
               autoCorrect={false}
@@ -295,6 +318,10 @@ export default function AuthScreen({ navigation }) {
               </Text>
             </TouchableOpacity>
 
+            {errorMessage ? (
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            ) : null}
+
             <Text style={styles.helperText}>
               {isSignup
                 ? 'Already have an account? Switch to Login.'
@@ -318,22 +345,32 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
+    padding: 28,
     backgroundColor: colors.background,
   },
   hero: {
     marginBottom: 28,
   },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  brandIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+    marginRight: 10,
+  },
   kicker: {
-    color: colors.accent,
+    color: colors.primarySoft,
     textTransform: 'uppercase',
     letterSpacing: 2,
     fontSize: 12,
-    marginBottom: 10,
   },
   title: {
     color: colors.text,
-    fontSize: 34,
+    fontSize: 38,
     fontWeight: '800',
     marginBottom: 12,
   },
@@ -344,15 +381,15 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: colors.surface,
-    borderRadius: 28,
-    padding: 22,
+    borderRadius: 30,
+    padding: 24,
     borderWidth: 1,
     borderColor: colors.border,
   },
   toggleRow: {
     flexDirection: 'row',
     backgroundColor: colors.surfaceMuted,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 4,
     marginBottom: 18,
   },
@@ -392,7 +429,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 16,
+    borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 15,
     color: colors.text,
@@ -400,7 +437,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: colors.primary,
-    borderRadius: 18,
+    borderRadius: 20,
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 4,
@@ -418,6 +455,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     marginTop: 14,
+    textAlign: 'center',
+  },
+  errorText: {
+    color: '#ff6b6b',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 12,
     textAlign: 'center',
   },
 });

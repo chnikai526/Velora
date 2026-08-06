@@ -1,0 +1,14 @@
+import React, { useMemo, useState } from 'react';
+import { FlatList, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import colors from '../theme/colors';
+
+export default function ExchangeRatesScreen({ route }) {
+  const [search, setSearch] = useState('');
+  const updatedAt = route.params?.updatedAt;
+  const rows = useMemo(() => Object.entries(route.params?.rates || {}).filter(([currency]) => currency.includes(search.trim().toUpperCase())).sort(([left], [right]) => left.localeCompare(right)), [route.params?.rates, search]);
+
+  return <SafeAreaView style={styles.safeArea}><View style={styles.content}><Text style={styles.title}>Current exchange rates</Text><Text style={styles.subtitle}>1 unit of currency in CAD · {updatedAt ? new Date(updatedAt).toLocaleDateString() : 'Latest available'}</Text><View style={styles.search}><Ionicons name="search" size={18} color={colors.textMuted}/><TextInput value={search} onChangeText={setSearch} placeholder="Search currency code" placeholderTextColor={colors.textMuted} autoCapitalize="characters" style={styles.searchInput}/></View><FlatList data={rows} keyExtractor={([currency]) => currency} contentContainerStyle={styles.list} renderItem={({ item: [currency, rate] }) => <View style={styles.row}><View style={styles.currencyIcon}><Text style={styles.currencyIconText}>{currency.slice(0, 1)}</Text></View><View style={styles.rowInfo}><Text style={styles.currency}>{currency}</Text><Text style={styles.meta}>1 {currency} = {Number(rate).toFixed(5)} CAD</Text></View><Text style={styles.rate}>{Number(rate).toFixed(5)}</Text></View>} ListEmptyComponent={<Text style={styles.empty}>No exchange rates found.</Text>}/></View></SafeAreaView>;
+}
+
+const styles = StyleSheet.create({safeArea:{flex:1,backgroundColor:colors.background},content:{flex:1,padding:20},title:{color:colors.text,fontSize:28,fontWeight:'800',marginTop:8},subtitle:{color:colors.textMuted,fontSize:12,marginTop:7,marginBottom:20},search:{flexDirection:'row',alignItems:'center',gap:10,backgroundColor:colors.surfaceMuted,borderWidth:1,borderColor:colors.border,borderRadius:16,paddingHorizontal:14,marginBottom:14},searchInput:{flex:1,color:colors.text,paddingVertical:13},list:{paddingBottom:24},row:{flexDirection:'row',alignItems:'center',backgroundColor:colors.surface,borderWidth:1,borderColor:colors.border,borderRadius:18,padding:14,marginBottom:9},currencyIcon:{width:38,height:38,borderRadius:13,backgroundColor:colors.primary,alignItems:'center',justifyContent:'center',marginRight:12},currencyIconText:{color:colors.text,fontWeight:'800'},rowInfo:{flex:1},currency:{color:colors.text,fontSize:15,fontWeight:'800',marginBottom:3},meta:{color:colors.textMuted,fontSize:11},rate:{color:colors.primarySoft,fontSize:14,fontWeight:'800'},empty:{color:colors.textMuted,textAlign:'center',paddingTop:28}});

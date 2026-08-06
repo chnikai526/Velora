@@ -1,5 +1,10 @@
 import { getApps, initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { 
+  initializeAuth, 
+  getReactNativePersistence 
+} from 'firebase/auth';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore } from 'firebase/firestore';
 
 const REQUIRED_CONFIG_KEYS = [
@@ -51,7 +56,11 @@ export const backupApp = backupFirebaseEnabled
 
 export const primaryDb = primaryApp ? getFirestore(primaryApp) : null;
 export const backupDb = backupApp ? getFirestore(backupApp) : null;
-export const primaryAuth = primaryApp ? getAuth(primaryApp) : null;
+export const primaryAuth = primaryApp
+  ? initializeAuth(primaryApp, {
+      persistence: getReactNativePersistence(AsyncStorage),
+    })
+  : null;
 
 export const getConfiguredDatabases = () =>
   [
