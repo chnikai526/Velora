@@ -213,8 +213,8 @@ export default function AuthScreen() {
             </Text>
             <Text style={styles.subtitle}>
               {isSignup
-                ? 'Start tracking spending, income, and shared money in one clean flow.'
-                : 'Sign in to get back to your dashboard, expenses, and friend balances.'}
+                ? 'Start tracking your spending in one clean flow.'
+                : 'Sign in to get back to your expense dashboard.'}
             </Text>
           </View>
 

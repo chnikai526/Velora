@@ -13,24 +13,22 @@ import { Ionicons } from '@expo/vector-icons';
 import colors from '../theme/colors';
 
 const EXPENSE_CATEGORIES = ['Food', 'Transport', 'Bills', 'Shopping', 'Entertainment', 'Health', 'Education', 'Subscriptions', 'Travel', 'Others'];
-const INCOME_CATEGORIES = ['Salary', 'Freelance', 'Business', 'Gift', 'Investment', 'Other'];
-const PAYMENT_METHODS = ['Card', 'Cash', 'Bank transfer', 'Apple Pay'];
+const REPEAT_INTERVALS = ['Daily', 'Weekly', 'Monthly', 'Custom'];
 
 const getInitialValues = (transaction) => ({
   amount: transaction?.amount ? String(transaction.amount) : '',
-  category: transaction?.category || (transaction?.type === 'Income' ? INCOME_CATEGORIES[0] : EXPENSE_CATEGORIES[0]),
+  category: transaction?.category || EXPENSE_CATEGORIES[0],
   note: transaction?.note || '',
-  paymentMethod: transaction?.paymentMethod || 'Card',
   recurring: Boolean(transaction?.recurring),
-  recipient: transaction?.recipient || '',
-  type: transaction?.type || 'Expense',
+  startDate: transaction?.date ? new Date(transaction.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+  time: transaction?.date ? new Date(transaction.date).toTimeString().slice(0, 5) : new Date().toTimeString().slice(0, 5),
+  repeatInterval: transaction?.repeatInterval || 'Monthly',
+  type: 'Expense',
 });
 
-export default function TransactionFormModal({ visible, transaction, onClose, onSave }) {
+export default function TransactionFormModal({ visible = true, transaction, onClose, onSave, fullScreen = false }) {
   const [values, setValues] = useState(getInitialValues(transaction));
   const isEditing = Boolean(transaction);
-  const isFriendActivity = values.type === 'Borrowed' || values.type === 'Given';
-  const categories = values.type === 'Expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
 
   useEffect(() => {
     if (visible) {
@@ -38,59 +36,43 @@ export default function TransactionFormModal({ visible, transaction, onClose, on
     }
   }, [transaction, visible]);
 
-  const changeType = (type) => {
-    if (type === 'Friend') {
-      setValues((current) => ({ ...current, type: 'Borrowed', category: 'Friend activity' }));
-      return;
-    }
-    setValues((current) => ({
-      ...current,
-      type,
-      category: type === 'Expense' ? EXPENSE_CATEGORIES[0] : INCOME_CATEGORIES[0],
-    }));
+  const save = () => {
+    const date = new Date(`${values.startDate}T${values.time || '00:00'}`);
+    onSave({ ...values, date: Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString() });
   };
 
-  const save = () => onSave(values);
-
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={styles.safeArea}>
+  const form = <View style={styles.safeArea}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.eyebrow}>{isEditing ? 'Edit transaction' : 'New transaction'}</Text>
-            <Text style={styles.title}>{isEditing ? 'Update your record' : 'What would you like to add?'}</Text>
+            <Text style={styles.eyebrow}>{isEditing ? 'Edit expense' : 'New expense'}</Text>
+            <Text style={styles.title}>{isEditing ? 'Update your record' : 'Add an expense'}</Text>
           </View>
           <TouchableOpacity accessibilityLabel="Close transaction form" onPress={onClose} style={styles.closeButton}>
             <Ionicons name="close" size={22} color={colors.text} />
           </TouchableOpacity>
         </View>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.typeRow}>
-            {['Expense', 'Income', 'Friend'].map((item) => (
-              <TouchableOpacity key={item} onPress={() => changeType(item)} style={[styles.typeButton, (item === 'Friend' ? isFriendActivity : values.type === item) && styles.typeButtonActive]}>
-                <Text style={[styles.typeText, values.type === item && styles.typeTextActive]}>{item}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
           <View style={styles.amountCard}>
             <Text style={styles.fieldLabel}>Amount</Text>
             <View style={styles.amountRow}><Text style={styles.currency}>$</Text><TextInput value={values.amount} onChangeText={(amount) => setValues((current) => ({ ...current, amount }))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.textMuted} style={styles.amountInput} /></View>
           </View>
           <View style={styles.card}>
-            {isFriendActivity ? <><Text style={styles.fieldLabel}>Friend</Text><TextInput value={values.recipient} onChangeText={(recipient) => setValues((current) => ({ ...current, recipient }))} placeholder="Friend's name" placeholderTextColor={colors.textMuted} style={styles.input} /><Text style={styles.fieldLabel}>Activity</Text><View style={styles.methodRow}>{[['Borrowed', 'I borrowed'], ['Given', 'I lent']].map(([value, label]) => <TouchableOpacity key={value} onPress={() => setValues((current) => ({ ...current, type: value }))} style={[styles.method, values.type === value && styles.methodActive]}><Text style={[styles.methodText, values.type === value && styles.methodTextActive]}>{label}</Text></TouchableOpacity>)}</View></> : <><Text style={styles.fieldLabel}>Category</Text>
+            <Text style={styles.fieldLabel}>Category</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-              {categories.map((item) => <TouchableOpacity key={item} onPress={() => setValues((current) => ({ ...current, category: item }))} style={[styles.chip, values.category === item && styles.chipActive]}><Text style={[styles.chipText, values.category === item && styles.chipTextActive]}>{item}</Text></TouchableOpacity>)}
-            </ScrollView></>}
-            <Text style={styles.fieldLabel}>Payment method</Text>
-            <View style={styles.methodRow}>{PAYMENT_METHODS.map((item) => <TouchableOpacity key={item} onPress={() => setValues((current) => ({ ...current, paymentMethod: item }))} style={[styles.method, values.paymentMethod === item && styles.methodActive]}><Text style={[styles.methodText, values.paymentMethod === item && styles.methodTextActive]}>{item}</Text></TouchableOpacity>)}</View>
+              {EXPENSE_CATEGORIES.map((item) => <TouchableOpacity key={item} onPress={() => setValues((current) => ({ ...current, category: item }))} style={[styles.chip, values.category === item && styles.chipActive]}><Text style={[styles.chipText, values.category === item && styles.chipTextActive]}>{item}</Text></TouchableOpacity>)}
+            </ScrollView>
             <TextInput value={values.note} onChangeText={(note) => setValues((current) => ({ ...current, note }))} placeholder="Description (optional)" placeholderTextColor={colors.textMuted} style={styles.input} />
             <View style={styles.settingRow}><View><Text style={styles.settingTitle}>Repeat this transaction</Text><Text style={styles.settingCopy}>Set up a recurring entry</Text></View><Switch value={values.recurring} onValueChange={(recurring) => setValues((current) => ({ ...current, recurring }))} trackColor={{ false: colors.borderStrong, true: colors.primary }} thumbColor={colors.text} /></View>
+            {values.recurring && <View style={styles.schedule}>
+              <Text style={styles.fieldLabel}>Start date</Text><TextInput value={values.startDate} onChangeText={(startDate) => setValues((current) => ({ ...current, startDate }))} placeholder="YYYY-MM-DD" placeholderTextColor={colors.textMuted} style={styles.input} />
+              <Text style={styles.fieldLabel}>Time</Text><TextInput value={values.time} onChangeText={(time) => setValues((current) => ({ ...current, time }))} placeholder="HH:MM" placeholderTextColor={colors.textMuted} style={styles.input} />
+              <Text style={styles.fieldLabel}>Repeat interval</Text><View style={styles.intervalRow}>{REPEAT_INTERVALS.map((item) => <TouchableOpacity key={item} onPress={() => setValues((current) => ({ ...current, repeatInterval: item }))} style={[styles.interval, values.repeatInterval === item && styles.intervalActive]}><Text style={[styles.intervalText, values.repeatInterval === item && styles.intervalTextActive]}>{item}</Text></TouchableOpacity>)}</View>
+            </View>}
           </View>
           <TouchableOpacity onPress={save} style={styles.saveButton}><Text style={styles.saveText}>{isEditing ? 'Save changes' : 'Save transaction'}</Text></TouchableOpacity>
         </ScrollView>
-      </View>
-    </Modal>
-  );
+      </View>;
+  return fullScreen ? form : <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>{form}</Modal>;
 }
 
 const styles = StyleSheet.create({
@@ -104,5 +86,5 @@ const styles = StyleSheet.create({
   amountCard: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.primary, borderRadius: 28, padding: 22, marginBottom: 16 }, fieldLabel: { color: colors.textSoft, fontSize: 14, fontWeight: '700', marginBottom: 12 }, amountRow: { flexDirection: 'row', alignItems: 'center' }, currency: { color: colors.textMuted, fontSize: 34, fontWeight: '700', marginRight: 10 }, amountInput: { flex: 1, color: colors.text, fontSize: 40, fontWeight: '800', paddingVertical: 2 },
   card: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 28, padding: 20, marginBottom: 18 }, chips: { gap: 8, paddingBottom: 22 }, chip: { backgroundColor: colors.surfaceMuted, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: colors.border }, chipActive: { backgroundColor: '#12314a', borderColor: colors.primary }, chipText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' }, chipTextActive: { color: colors.primarySoft },
   methodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 }, method: { width: '47%', backgroundColor: colors.surfaceMuted, borderRadius: 14, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: colors.border }, methodActive: { borderColor: colors.primary, backgroundColor: '#12314a' }, methodText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' }, methodTextActive: { color: colors.text }, input: { backgroundColor: colors.surfaceMuted, borderRadius: 16, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 15, paddingVertical: 14, color: colors.text, marginBottom: 18 },
-  settingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, settingTitle: { color: colors.text, fontSize: 15, fontWeight: '700', marginBottom: 4 }, settingCopy: { color: colors.textMuted, fontSize: 12 }, saveButton: { backgroundColor: colors.primary, borderRadius: 20, alignItems: 'center', paddingVertical: 17 }, saveText: { color: colors.text, fontWeight: '800', fontSize: 16 },
+  settingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, settingTitle: { color: colors.text, fontSize: 15, fontWeight: '700', marginBottom: 4 }, settingCopy: { color: colors.textMuted, fontSize: 12 }, schedule: { marginTop: 22 }, intervalRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, interval: { paddingHorizontal: 13, paddingVertical: 10, borderRadius: 14, backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border }, intervalActive: { borderColor: colors.primary, backgroundColor: '#12314a' }, intervalText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' }, intervalTextActive: { color: colors.primarySoft }, saveButton: { backgroundColor: colors.primary, borderRadius: 20, alignItems: 'center', paddingVertical: 17 }, saveText: { color: colors.text, fontWeight: '800', fontSize: 16 },
 });

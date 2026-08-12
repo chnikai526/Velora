@@ -1,95 +1,75 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ImageBackground, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Circle } from 'react-native-svg';
-import SpendingCat from '../components/SpendingCat';
+import Animated, { FadeInDown, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
+import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import TransactionFormModal from '../components/TransactionFormModal';
-import CurrentBalanceCard from '../components/CurrentBalanceCard';
-import CurrencyConverterCard from '../components/CurrencyConverterCard';
-import colors from '../theme/colors';
+import AnimatedVeloraCat from '../components/AnimatedVeloraCat';
 
-const chartColors = ['#7184ff', '#ff5f7c', '#ffad4d', '#9c69e8', '#45c8a0', '#5d9cec'];
-const money = (value) => `$${value.toFixed(2)}`;
-
-const isInCurrentMonth = (item) => {
-  const date = new Date(item.date || item.createdAt);
-  const now = new Date();
-  return date >= new Date(now.getFullYear(), now.getMonth(), 1) && date <= now;
+const budget = 3000;
+const formatMoney = (value) => `$${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatDate = (value) => {
+  const date = new Date(value);
+  const today = new Date();
+  const isToday = date.toDateString() === today.toDateString();
+  return `${isToday ? 'Today' : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+};
+const iconFor = (item) => {
+  const value = `${item.category} ${item.note}`.toLowerCase();
+  if (value.includes('coffee')) return ['cafe-outline', '#e9ad72'];
+  if (value.includes('groc') || value.includes('food')) return ['basket-outline', '#c9a672'];
+  if (value.includes('music') || value.includes('spotify')) return ['musical-notes-outline', '#ce9a91'];
+  if (value.includes('shop') || value.includes('zara')) return ['bag-handle-outline', '#e2bf88'];
+  return ['receipt-outline', '#d9a979'];
 };
 
-function ExpenseDonut({ groups, total }) {
-  const radius = 48;
-  const circumference = 2 * Math.PI * radius;
-  let offset = 0;
-  if (!total) return <View style={styles.emptyDonut}><Text style={styles.emptyDonutText}>No expenses{`\n`}yet</Text></View>;
-  return <View style={styles.donutWrap}><Svg width={132} height={132} viewBox="0 0 120 120"><Circle cx="60" cy="60" r={radius} stroke={colors.surfaceMuted} strokeWidth="15" fill="none" />{groups.map(([name, value], index) => { const length = (value / total) * circumference; const segment = <Circle key={name} cx="60" cy="60" r={radius} stroke={chartColors[index % chartColors.length]} strokeWidth="15" fill="none" strokeLinecap="butt" strokeDasharray={`${Math.max(length - 2, 0)} ${circumference - Math.max(length - 2, 0)}`} strokeDashoffset={-offset} rotation="-90" origin="60, 60" />; offset += length; return segment; })}</Svg><View style={styles.donutCenter}><Text style={styles.donutCenterLabel}>Spent</Text><Text style={styles.donutCenterValue}>{money(total)}</Text></View></View>;
-}
-
-export default function HomeScreen({ transactions, updateTransaction, settleTransaction, removeTransaction, navigation, route }) {
-  const savedTransaction = route?.params?.savedTransaction;
-  const [editingTransaction, setEditingTransaction] = useState(null);
-
-  useEffect(() => {
-    if (!savedTransaction) {
-      return undefined;
-    }
-
-    const timeout = setTimeout(() => {
-      navigation.setParams({ savedTransaction: undefined });
-    }, 10000);
-
-    return () => clearTimeout(timeout);
-  }, [navigation, savedTransaction]);
-  const { currentBalance, monthExpenses, income, expenses, friendCashflow, groups } = useMemo(() => {
-    const month = transactions.filter(isInCurrentMonth);
-    const monthExpenses = month.filter((item) => item.type === 'Expense');
-    const income = month.filter((item) => item.type === 'Income').reduce((sum, item) => sum + item.amount, 0);
-    const expenses = monthExpenses.reduce((sum, item) => sum + item.amount, 0);
-    const groupMap = monthExpenses.reduce((all, item) => ({ ...all, [item.category || 'Other']: (all[item.category || 'Other'] || 0) + item.amount }), {});
-    const activeFriendTransactions = month.filter(
-      (item) =>
-        (item.type === 'Borrowed' || item.type === 'Given') &&
-        item.status !== 'settled'
-    );
-    const friendCashflow = activeFriendTransactions.filter((item) => item.type === 'Borrowed').reduce((sum, item) => sum + item.amount, 0) - activeFriendTransactions.filter((item) => item.type === 'Given').reduce((sum, item) => sum + item.amount, 0);
-    const totalIncome = transactions.filter((item) => item.type === 'Income').reduce((sum, item) => sum + item.amount, 0);
-    const totalExpenses = transactions.filter((item) => item.type === 'Expense').reduce((sum, item) => sum + item.amount, 0);
-    const totalFriendCashflow = transactions.filter((item) => (item.type === 'Borrowed' || item.type === 'Given') && item.status !== 'settled').reduce((sum, item) => sum + (item.type === 'Borrowed' ? item.amount : -item.amount), 0);
-    return { currentBalance: totalIncome - totalExpenses + totalFriendCashflow, monthExpenses: monthExpenses.sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt)), income, expenses, savings: income - expenses, friendCashflow, groups: Object.entries(groupMap).sort(([, a], [, b]) => b - a) };
+export default function HomeScreen({ transactions, updateTransaction, removeTransaction, currentUser }) {
+  const [editing, setEditing] = useState(null);
+  const { width } = useWindowDimensions();
+  const { expenses, recent } = useMemo(() => {
+    const expenseItems = transactions.filter((item) => item.type === 'Expense');
+    return { expenses: expenseItems.reduce((sum, item) => sum + Number(item.amount || 0), 0), recent: [...expenseItems].sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt)).slice(0, 5) };
   }, [transactions]);
-  const firstDay = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date());
-  const activeFriendTransactions = transactions.filter((item) => (item.type === 'Borrowed' || item.type === 'Given') && item.status !== 'settled');
-  const confirmRemove = (transaction) => {
-    Alert.alert('Delete transaction?', `Delete ${transaction.category || transaction.note || 'this transaction'} permanently?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => removeTransaction(transaction.id) },
-    ]);
-  };
-  const saveEdit = (entry) => {
-    const result = updateTransaction(editingTransaction.id, entry);
-    if (!result.ok) {
-      Alert.alert('Unable to save changes', result.message);
-      return;
-    }
-    setEditingTransaction(null);
-  };
+  const remaining = Math.max(0, budget - expenses);
+  const budgetRatio = Math.max(0, Math.min(1, remaining / budget));
+  const userName = currentUser?.displayName?.trim().split(/\s+/)[0] || 'there';
+  const cardWidth = Math.min(292, width - 66);
+  const offsets = [0.06, 0.43, 0.1, 0.46, 0.14];
+  const remove = (item) => Alert.alert('Delete transaction?', `Delete ${item.category || item.note || 'this transaction'} permanently?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => removeTransaction(item.id) }]);
+  const save = (entry) => { const result = updateTransaction(editing.id, entry); if (result.ok) setEditing(null); else Alert.alert('Unable to save changes', result.message); };
 
-  return <SafeAreaView style={styles.safeArea}><ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-    <View style={styles.topRow}><View><Text style={styles.greeting}>Good day</Text><Text style={styles.title}>Your money overview</Text></View><View style={styles.avatar}><Text style={styles.avatarText}>V</Text></View></View>
-    {savedTransaction && <View style={styles.savedNotice}><Ionicons name="checkmark-circle" size={18} color={colors.success}/><Text style={styles.savedNoticeText}>Last {savedTransaction.type} Saved: {money(savedTransaction.amount)}</Text></View>}
-    <CurrentBalanceCard balance={currentBalance} />
-    <View style={styles.balanceCard}><Text style={styles.balanceLabel}>Spending overview</Text><Text style={styles.balanceValue}>{money(expenses)}</Text><Text style={styles.balanceCopy}>{firstDay} 1 – today</Text><SpendingCat expenses={expenses} income={income} friendCashflow={friendCashflow} /></View>
-    <View style={styles.sectionHead}><Text style={styles.sectionTitle}>This month’s expenses</Text><Text style={styles.sectionMeta}>{monthExpenses.length} entries</Text></View>
-    <View style={styles.analyticsCard}><ExpenseDonut groups={groups} total={expenses}/><View style={styles.legend}>{groups.slice(0, 4).map(([name, value], index)=><View key={name} style={styles.legendRow}><View style={[styles.legendDot,{backgroundColor:chartColors[index]}]}/><Text style={styles.legendName}>{name}</Text><Text style={styles.legendValue}>{Math.round((value / expenses) * 100)}%</Text></View>)}{groups.length === 0 && <Text style={styles.legendEmpty}>Add an expense to see your breakdown.</Text>}</View></View>
-    
-    <View style={styles.sectionHead}><View><Text style={styles.sectionTitle}>Expenses</Text><Text style={styles.sectionSub}>From the 1st of {firstDay}</Text></View><Text style={styles.sectionMeta}>Current month</Text></View>
-    {monthExpenses.length === 0 ? <View style={styles.emptyState}><Ionicons name="receipt-outline" size={30} color={colors.primarySoft}/><Text style={styles.emptyTitle}>No expenses yet</Text><Text style={styles.emptyCopy}>Use the Add tab to record your first expense.</Text></View> : monthExpenses.map((item, index)=><View key={item.id} style={styles.transaction}><View style={[styles.transactionIcon,{backgroundColor:`${chartColors[index % chartColors.length]}22` }]}><Ionicons name="arrow-up" size={18} color={chartColors[index % chartColors.length]}/></View><View style={styles.transactionInfo}><Text style={styles.transactionName}>{item.category || item.note || 'Expense'}</Text><Text style={styles.transactionMeta}>{item.paymentMethod || 'Payment'} · {new Date(item.date || item.createdAt).toLocaleDateString()}</Text></View><View style={styles.transactionRight}><Text style={styles.transactionAmount}>-{money(item.amount)}</Text><View style={styles.transactionActions}><TouchableOpacity onPress={() => setEditingTransaction(item)}><Text style={styles.edit}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={() => confirmRemove(item)}><Text style={styles.remove}>Remove</Text></TouchableOpacity></View></View></View>)}
-    <View style={styles.sectionHead}><View><Text style={styles.sectionTitle}>Borrowed & Lent</Text><Text style={styles.sectionSub}>Open balances with friends</Text></View><Text style={styles.sectionMeta}>{activeFriendTransactions.length} active</Text></View>
-    {activeFriendTransactions.length === 0 ? <View style={styles.emptyState}><Ionicons name="people-outline" size={30} color={colors.primarySoft}/><Text style={styles.emptyTitle}>No open friend balances</Text><Text style={styles.emptyCopy}>Use Friend in the Add tab to track money borrowed or lent.</Text></View> : activeFriendTransactions.map((item) => <View key={item.id} style={styles.transaction}><View style={styles.transactionIcon}><Ionicons name="people" size={18} color={colors.primarySoft}/></View><View style={styles.transactionInfo}><Text style={styles.transactionName}>{item.type === 'Borrowed' ? `You owe ${item.recipient || 'a friend'}` : `${item.recipient || 'A friend'} owes you`}</Text><Text style={styles.transactionMeta}>Created {new Date(item.date || item.createdAt).toLocaleDateString()}</Text></View><View style={styles.transactionRight}><Text style={styles.transactionAmount}>{money(item.amount)}</Text><View style={styles.transactionActions}><TouchableOpacity onPress={() => setEditingTransaction(item)}><Text style={styles.edit}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={() => settleTransaction(item.id)}><Text style={styles.settled}>Mark settled</Text></TouchableOpacity></View></View></View>)}
-    <TransactionFormModal visible={Boolean(editingTransaction)} transaction={editingTransaction} onClose={() => setEditingTransaction(null)} onSave={saveEdit} />
-    <CurrencyConverterCard />
-  </ScrollView></SafeAreaView>;
+  return <ImageBackground source={require('../../assets/mountain-background.png')} resizeMode="cover" style={styles.background}><CinematicOverlay /><SafeAreaView style={styles.safe}><Animated.ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <View style={styles.header}><Text style={styles.greeting}>Good morning, {userName} 👋</Text></View>
+    <View style={styles.hero}><AnimatedVeloraCat budgetPercentage={budgetRatio * 100} foodLevel={budgetRatio * 100} /></View>
+    <View style={styles.budgetLine}><View><Text style={styles.remaining}>{formatMoney(remaining)}</Text><Text style={styles.budgetEyebrow}>LEFT TO SPEND</Text></View><Text style={styles.percent}>{Math.round(budgetRatio * 100)}%</Text></View>
+    <View style={styles.transactions}><TailString height={Math.max(170, recent.length * 93)} />
+      {recent.length ? recent.map((item, index) => {
+        const [icon, color] = iconFor(item);
+        return <Animated.View key={item.id} entering={FadeInDown.delay(index * 85).duration(500)} style={[styles.cardWrap, { width: cardWidth, marginLeft: Math.max(0, (width - cardWidth) * offsets[index]) }]}><View style={styles.knot} /><TouchableOpacity activeOpacity={0.84} style={styles.row} onPress={() => setEditing(item)} onLongPress={() => remove(item)}>
+          <View style={[styles.icon, { backgroundColor: `${color}20` }]}><Ionicons name={icon} size={19} color={color} /></View><View style={styles.info}><Text style={styles.name} numberOfLines={1}>{item.note || item.category || 'Expense'}</Text><Text style={styles.category}>{item.category || 'Expense'} · {formatDate(item.date || item.createdAt)}</Text></View><Text style={styles.amount}>−{formatMoney(item.amount)}</Text>
+        </TouchableOpacity></Animated.View>;
+      }) : <View style={styles.empty}><Ionicons name="fish-outline" size={27} color="#ddb47a" /><Text style={styles.emptyTitle}>The bowl is waiting</Text><Text style={styles.emptyCopy}>Add an expense and it will appear here.</Text></View>}
+    </View>
+    {recent.length > 0 && <Text style={styles.hint}>Tap a receipt to edit · Hold to delete</Text>}
+    <TransactionFormModal visible={Boolean(editing)} transaction={editing} onClose={() => setEditing(null)} onSave={save} />
+  </Animated.ScrollView></SafeAreaView></ImageBackground>;
 }
 
-const styles=StyleSheet.create({safeArea:{flex:1,backgroundColor:colors.background},content:{padding:20,paddingBottom:110},topRow:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginTop:10,marginBottom:20},greeting:{color:colors.textMuted,fontSize:14,marginBottom:4},title:{color:colors.text,fontSize:27,fontWeight:'800'},avatar:{width:42,height:42,borderRadius:21,backgroundColor:colors.primary,justifyContent:'center',alignItems:'center'},avatarText:{color:colors.text,fontWeight:'800',fontSize:16},savedNotice:{flexDirection:'row',alignItems:'center',gap:8,backgroundColor:colors.surface,marginBottom:16,padding:13,borderRadius:16,borderWidth:1,borderColor:colors.success},savedNoticeText:{color:colors.textSoft,fontSize:13,fontWeight:'700'},balanceCard:{overflow:'hidden',backgroundColor:'#3f2873',borderRadius:26,padding:22,marginBottom:24},balanceLabel:{color:'#e1cfbf',fontSize:14},balanceValue:{color:'#e1cfbf',fontSize:37,fontWeight:'800',marginTop:5,marginBottom:6},balanceCopy:{color:'#e1cfbf',fontSize:12},sectionHead:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:12},sectionTitle:{color:colors.text,fontSize:19,fontWeight:'800'},sectionSub:{color:colors.textMuted,fontSize:12,marginTop:3},sectionMeta:{color:colors.primarySoft,fontSize:12,fontWeight:'700'},analyticsCard:{backgroundColor:colors.surface,borderRadius:24,borderWidth:1,borderColor:colors.border,padding:17,flexDirection:'row',alignItems:'center',marginBottom:25},donutWrap:{width:135,height:135,justifyContent:'center',alignItems:'center'},donutCenter:{position:'absolute',alignItems:'center'},donutCenterLabel:{color:colors.textMuted,fontSize:10},donutCenterValue:{color:colors.text,fontSize:13,fontWeight:'800',marginTop:3},emptyDonut:{width:105,height:105,borderRadius:53,borderWidth:14,borderColor:colors.surfaceMuted,justifyContent:'center',alignItems:'center'},emptyDonutText:{color:colors.textMuted,fontSize:11,textAlign:'center'},legend:{flex:1,paddingLeft:12},legendRow:{flexDirection:'row',alignItems:'center',marginBottom:12},legendDot:{width:8,height:8,borderRadius:4,marginRight:8},legendName:{color:colors.textSoft,fontSize:12,flex:1},legendValue:{color:colors.text,fontSize:12,fontWeight:'700'},legendEmpty:{color:colors.textMuted,fontSize:12,lineHeight:18},emptyState:{alignItems:'center',backgroundColor:colors.surface,borderRadius:22,borderWidth:1,borderColor:colors.border,padding:30,marginBottom:22},emptyTitle:{color:colors.text,fontSize:17,fontWeight:'700',marginTop:10},emptyCopy:{color:colors.textMuted,fontSize:13,textAlign:'center',marginTop:6},transaction:{backgroundColor:colors.surface,borderRadius:19,borderColor:colors.border,borderWidth:1,padding:13,flexDirection:'row',alignItems:'center',marginBottom:10},transactionIcon:{width:40,height:40,borderRadius:14,alignItems:'center',justifyContent:'center',marginRight:11,backgroundColor:colors.surfaceMuted},transactionInfo:{flex:1},transactionName:{color:colors.text,fontSize:14,fontWeight:'700',marginBottom:4},transactionMeta:{color:colors.textMuted,fontSize:11},transactionRight:{alignItems:'flex-end'},transactionAmount:{color:colors.dangerSoft,fontSize:14,fontWeight:'800',marginBottom:6},transactionActions:{flexDirection:'row',gap:10},edit:{color:colors.primarySoft,fontSize:11,fontWeight:'700'},settled:{color:colors.success,fontSize:11,fontWeight:'700'},remove:{color:colors.dangerSoft,fontSize:11,fontWeight:'700'}});
+function TailString({ height }) {
+  const settle = useSharedValue(-1.8);
+  useEffect(() => { settle.value = withSequence(withTiming(1.1, { duration: 360 }), withTiming(0, { duration: 900 })); }, [settle]);
+  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ rotate: `${settle.value}deg` }] }));
+  return <Animated.View pointerEvents="none" style={[styles.string, { height }, animatedStyle]}><Svg width="100%" height="100%" viewBox={`0 0 360 ${height}`} preserveAspectRatio="none"><Path d={`M264 0 C286 31 194 41 237 72 S314 108 218 143 S120 ${height - 42} 169 ${height}`} fill="none" stroke="#d3a76f" strokeOpacity=".48" strokeWidth="1.15" strokeLinecap="round" /><Path d={`M266 0 C285 31 196 41 239 72`} fill="none" stroke="#fff1ce" strokeOpacity=".28" strokeWidth=".45" /></Svg></Animated.View>;
+}
+
+function CinematicOverlay() { return <Svg pointerEvents="none" style={styles.backdrop} width="100%" height="100%"><Defs><LinearGradient id="mountainShade" x1="0" y1="0" x2="0" y2="1"><Stop offset="0" stopColor="#080605" stopOpacity=".54" /><Stop offset=".48" stopColor="#140b08" stopOpacity=".24" /><Stop offset="1" stopColor="#070504" stopOpacity=".72" /></LinearGradient></Defs><Rect width="100%" height="100%" fill="url(#mountainShade)" /></Svg>; }
+
+const styles = StyleSheet.create({
+  background: { flex: 1, backgroundColor: '#090706' }, backdrop: { ...StyleSheet.absoluteFillObject }, safe: { flex: 1 }, content: { paddingHorizontal: 20, paddingBottom: 112 },
+  header: { paddingTop: 13, paddingBottom: 25 }, greeting: { color: '#fff3df', fontSize: 23, fontWeight: '700', letterSpacing: -.4, textShadowColor: 'rgba(0,0,0,.8)', textShadowRadius: 10 },
+  hero: { overflow: 'visible' },
+  budgetLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, paddingHorizontal: 7 }, budgetEyebrow: { color: '#c6a27a', fontSize: 10, fontWeight: '800', letterSpacing: 1.15, marginTop: 2 }, remaining: { color: '#fff0d7', fontSize: 28, fontWeight: '700', letterSpacing: -.7, textShadowColor: 'rgba(0,0,0,.65)', textShadowRadius: 8 }, percent: { color: '#f1d0a0', fontSize: 11, fontWeight: '800', overflow: 'hidden', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, backgroundColor: 'rgba(117,74,43,.62)', borderWidth: 1, borderColor: 'rgba(245,210,161,.24)' },
+  transactions: { position: 'relative', marginTop: 25, gap: 12 }, string: { position: 'absolute', top: -53, left: 0, right: 0, zIndex: 0 }, cardWrap: { zIndex: 1, position: 'relative' }, knot: { position: 'absolute', width: 8, height: 8, borderRadius: 4, left: 19, top: -4, zIndex: 3, backgroundColor: '#c69663', borderWidth: 1, borderColor: '#f6d3a0' }, row: { minHeight: 63, padding: 11, flexDirection: 'row', alignItems: 'center', borderRadius: 18, backgroundColor: 'rgba(39,25,18,.46)', borderWidth: 1, borderColor: 'rgba(245,212,168,.2)', shadowColor: '#000', shadowOpacity: .24, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 3 }, icon: { width: 37, height: 37, borderRadius: 13, justifyContent: 'center', alignItems: 'center', marginRight: 11 }, info: { flex: 1, minWidth: 0 }, name: { color: '#fff4e3', fontSize: 14, fontWeight: '700' }, category: { color: '#d6c0aa', fontSize: 10.5, marginTop: 4 }, amount: { color: '#f4b78e', fontSize: 13, fontWeight: '800', marginLeft: 8 },
+  empty: { alignItems: 'center', paddingVertical: 35, borderRadius: 23, backgroundColor: 'rgba(39,25,18,.35)', borderWidth: 1, borderColor: 'rgba(245,212,168,.13)' }, emptyTitle: { color: '#fff1da', fontWeight: '700', marginTop: 10 }, emptyCopy: { color: '#d7c0aa', fontSize: 12, marginTop: 5 }, hint: { color: '#c3a78d', fontSize: 10.5, textAlign: 'center', marginTop: 18 },
+});

@@ -23,7 +23,7 @@ export default function CurrentBalanceCard({ balance }) {
     return () => animation.stop();
   }, [glow, lift]);
 
-  return <Animated.View style={[styles.card, { opacity: glow, transform: [{ translateY: lift }] }]}><View style={styles.header}><View><Text style={styles.label}>Current balance</Text><Text style={styles.copy}>Income, expenses and active friend balances</Text></View><View style={styles.icon}><Ionicons name="wallet-outline" size={21} color={colors.text}/></View></View><Text style={[styles.amount, balance < 0 && styles.negative]}>{amount}</Text></Animated.View>;
+  return <Animated.View style={[styles.card, { opacity: glow, transform: [{ translateY: lift }] }]}><View style={styles.header}><View><Text style={styles.label}>Total spending</Text><Text style={styles.copy}>All expenses recorded so far</Text></View><View style={styles.icon}><Ionicons name="wallet-outline" size={21} color={colors.text}/></View></View><Text style={[styles.amount, balance < 0 && styles.negative]}>{amount}</Text></Animated.View>;
 }
 
 const styles = StyleSheet.create({

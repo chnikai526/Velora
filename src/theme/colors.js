@@ -1,5 +1,5 @@
 const colors = {
-  background: '#0d0b16',
+  background: 'transparent',
   surface: '#191526',
   surfaceAlt: '#231d33',
   surfaceMuted: '#120f1d',

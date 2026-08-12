@@ -52,6 +52,7 @@ const parseTransaction = (snapshot) => {
     type: data.type ?? 'Expense',
     paymentMethod: data.paymentMethod ?? '',
     recurring: Boolean(data.recurring),
+    repeatInterval: data.repeatInterval ?? null,
     status: data.status ?? 'active',
     settledAt: data.settledAt ?? null,
     date: data.date ?? data.createdAt ?? fallbackTimestamp,
@@ -198,19 +199,16 @@ function VeloraApp() {
       return { ok: false, message: 'Enter a valid amount greater than 0.' };
     }
 
-    if ((entry.type === 'Borrowed' || entry.type === 'Given') && !entry.recipient?.trim()) {
-      return { ok: false, message: 'Enter your friend’s name.' };
-    }
-
     const normalizedTransaction = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       amount,
       note: entry.note?.trim() ?? '',
       category: entry.category?.trim() ?? '',
       recipient: entry.recipient?.trim() ?? '',
-      type: entry.type,
-      paymentMethod: entry.paymentMethod?.trim() ?? '',
+      type: 'Expense',
+      paymentMethod: '',
       recurring: Boolean(entry.recurring),
+      repeatInterval: entry.repeatInterval ?? null,
       status: entry.status ?? 'active',
       date: entry.date ?? new Date().toISOString(),
       createdAt: new Date().toISOString(),
@@ -243,19 +241,17 @@ function VeloraApp() {
       return { ok: false, message: 'Enter a valid amount greater than 0.' };
     }
 
-    if ((entry.type === 'Borrowed' || entry.type === 'Given') && !entry.recipient?.trim()) {
-      return { ok: false, message: 'Enter your friend’s name.' };
-    }
-
     const updatedTransaction = {
       ...existingTransaction,
       amount,
       note: entry.note?.trim() ?? '',
       category: entry.category?.trim() ?? '',
       recipient: entry.recipient?.trim() ?? '',
-      type: entry.type,
-      paymentMethod: entry.paymentMethod?.trim() ?? '',
+      type: 'Expense',
+      paymentMethod: '',
       recurring: Boolean(entry.recurring),
+      repeatInterval: entry.repeatInterval ?? null,
+      date: entry.date ?? existingTransaction.date,
       updatedAt: new Date().toISOString(),
     };
 
@@ -320,10 +316,10 @@ export default function App() {
 const styles = StyleSheet.create({
   shell: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#05060f',
   },
   appFrame: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: 'transparent',
   },
 });

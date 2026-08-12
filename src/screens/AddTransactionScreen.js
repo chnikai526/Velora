@@ -1,27 +1,14 @@
-import React, { useCallback, useState } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
-import { Alert, View } from 'react-native';
+import React from 'react';
+import { Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import TransactionFormModal from '../components/TransactionFormModal';
-import colors from '../theme/colors';
 
 export default function AddTransactionScreen({ addTransaction, navigation }) {
-  const [visible, setVisible] = useState(false);
-
-  useFocusEffect(
-    useCallback(() => {
-      setVisible(true);
-    }, [])
-  );
-
-  const close = () => {
-    setVisible(false);
-    navigation.navigate('Home');
-  };
+  const close = () => navigation.navigate('Home');
 
   const save = (entry) => {
     const result = addTransaction({
       ...entry,
-      date: new Date().toISOString(),
     });
 
     if (!result.ok) {
@@ -29,13 +16,12 @@ export default function AddTransactionScreen({ addTransaction, navigation }) {
       return;
     }
 
-    setVisible(false);
     navigation.navigate('Home', { savedTransaction: result.transaction });
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <TransactionFormModal visible={visible} onClose={close} onSave={save} />
-    </View>
+    <SafeAreaView style={{ flex: 1 }}>
+      <TransactionFormModal fullScreen onClose={close} onSave={save} />
+    </SafeAreaView>
   );
 }

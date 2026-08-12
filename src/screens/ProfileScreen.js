@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   ScrollView,
@@ -8,26 +8,26 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { signOut } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { signOut, updateEmail, updateProfile } from 'firebase/auth';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { primaryAuth } from '../lib/firebase';
 import colors from '../theme/colors';
+import AnimalAvatar from '../components/avatars/AnimalAvatar';
+import EditProfileSheet from '../components/EditProfileSheet';
 
 const formatCurrency = (value) => `$${value.toFixed(2)}`;
 
 export default function ProfileScreen({
   currentUser,
   transactions,
-  clearTransactions,
-  cloudStatus,
 }) {
-  const incomeCount = transactions.filter((item) => item.type === 'Income').length;
-  const expenseCount = transactions.filter((item) => item.type === 'Expense').length;
-  const friendCount = transactions.filter(
-    (item) => item.type === 'Borrowed' || item.type === 'Given'
-  ).length;
-
-  const totalTracked = transactions.reduce((sum, item) => sum + item.amount, 0);
-  const latestTransaction = transactions[0];
+  const expenseTransactions = transactions.filter((item) => item.type === 'Expense');
+  const totalTracked = expenseTransactions.reduce((sum, item) => sum + item.amount, 0);
+  const fallbackProfile = { name: currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Velora member', email: currentUser?.email || '', dateOfBirth: '2000-01-01T00:00:00.000Z', avatarId: 'cat' };
+  const [profile, setProfile] = useState(fallbackProfile);
+  const [editing, setEditing] = useState(false);
+  const [success, setSuccess] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(1);
   const monthOptions = useMemo(() => Array.from({ length: 6 }, (_, index) => {
     const date = new Date();
@@ -40,7 +40,7 @@ export default function ProfileScreen({
     };
   }), []);
   const selectedPeriod = monthOptions[selectedMonth];
-  const pastTransactions = transactions.filter((item) => {
+  const pastTransactions = expenseTransactions.filter((item) => {
     const date = new Date(item.date || item.createdAt);
     return date.getFullYear() === selectedPeriod.year && date.getMonth() === selectedPeriod.month;
   });
@@ -65,26 +65,39 @@ export default function ProfileScreen({
     ]);
   };
 
-  const handleClearData = () => {
-    Alert.alert('Clear all transactions?', 'This permanently removes your transaction history from this device and Firestore.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear data', style: 'destructive', onPress: clearTransactions },
-    ]);
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem(`velora-profile-${currentUser?.uid || 'guest'}`).then((saved) => {
+      if (active && saved) setProfile(JSON.parse(saved));
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [currentUser?.uid]);
+
+  const saveProfile = async (nextProfile) => {
+    const cleanProfile = { name: nextProfile.name, email: nextProfile.email, dateOfBirth: nextProfile.dateOfBirth, avatarId: nextProfile.avatarId };
+    setProfile(cleanProfile);
+    setEditing(false);
+    setSuccess(true);
+    setTimeout(() => setSuccess(false), 2000);
+    await AsyncStorage.setItem(`velora-profile-${currentUser?.uid || 'guest'}`, JSON.stringify(cleanProfile));
+    if (!currentUser) return;
+    try {
+      await updateProfile(currentUser, { displayName: cleanProfile.name });
+      if (cleanProfile.email !== currentUser.email) await updateEmail(currentUser, cleanProfile.email);
+    } catch (_error) {
+      // The saved local profile remains current even if Firebase requires a recent sign-in.
+    }
   };
 
-  const name = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Velora member';
+  const name = profile.name || fallbackProfile.name;
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.heroCard}>
-          <View style={styles.avatar}><Text style={styles.avatarText}>{name.slice(0, 1).toUpperCase()}</Text></View>
-          <Text style={styles.heroTitle}>{name}</Text>
-          <Text style={styles.heroCopy}>
-            {currentUser?.email
-              ? `Signed in as ${currentUser.email}.`
-              : 'Keep an eye on your activity and reset your local data whenever needed.'}
-          </Text>
+          <TouchableOpacity onPress={() => setEditing(true)} style={styles.avatar}><AnimalAvatar avatarId={profile.avatarId} size={54}/></TouchableOpacity>
+          <TouchableOpacity onPress={() => setEditing(true)}><Text style={styles.heroTitle}>{name}</Text></TouchableOpacity>
+          <Text style={styles.profileEmail}>{profile.email}</Text>
         </View>
 
         <View style={styles.metricsGrid}>
@@ -99,8 +112,7 @@ export default function ProfileScreen({
         </View>
 
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Past transactions</Text>
-          <Text style={styles.sectionCopy}>Pick any month to review your income and expenses.</Text>
+          <Text style={styles.sectionTitle}>Transactions</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.monthRow}>
             {monthOptions.map((item, index) => (
               <TouchableOpacity key={item.key} onPress={() => setSelectedMonth(index)} style={[styles.monthChip, selectedMonth === index && styles.monthChipActive]}>
@@ -112,68 +124,18 @@ export default function ProfileScreen({
             <Text style={styles.historyEmpty}>No transactions in {selectedPeriod.label}.</Text>
           ) : pastTransactions.map((item) => (
             <View key={item.id} style={styles.historyItem}>
-              <View style={styles.historyIcon}><Text style={styles.historyIconText}>{item.type === 'Income' ? '+' : '−'}</Text></View>
-              <View style={styles.historyInfo}><Text style={styles.historyName}>{item.category || item.note || item.type}</Text><Text style={styles.historyMeta}>{item.paymentMethod || item.type} · {new Date(item.date || item.createdAt).toLocaleDateString()}</Text></View>
-              <Text style={[styles.historyAmount, item.type === 'Income' ? styles.historyIncome : styles.historyExpense]}>{item.type === 'Income' ? '+' : '−'}{formatCurrency(item.amount)}</Text>
+              <View style={styles.historyIcon}><Text style={styles.historyIconText}>−</Text></View>
+              <View style={styles.historyInfo}><Text style={styles.historyName}>{item.category || item.note || 'Expense'}</Text><Text style={styles.historyMeta}>{new Date(item.date || item.createdAt).toLocaleDateString()}</Text></View>
+              <Text style={[styles.historyAmount, styles.historyExpense]}>−{formatCurrency(item.amount)}</Text>
             </View>
           ))}
         </View>
 
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Income items</Text>
-            <Text style={styles.metricValue}>{incomeCount}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Expense items</Text>
-            <Text style={styles.metricValue}>{expenseCount}</Text>
-          </View>
-        </View>
-
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Preferences</Text>
-          {['Monthly budget', 'Currency · CAD', 'Appearance · Dark', 'Notifications', 'Security'].map((item) => (
+          {['Transactions', 'Monthly budget', 'Currency · CAD', 'Notifications', 'Security'].map((item) => (
             <View key={item} style={styles.preferenceRow}><Text style={styles.preferenceText}>{item}</Text><Text style={styles.chevron}>›</Text></View>
           ))}
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Your data</Text>
-          {['Backup data', 'Export CSV', 'Export PDF'].map((item) => (
-            <View key={item} style={styles.preferenceRow}><Text style={styles.preferenceText}>{item}</Text><Text style={styles.chevron}>›</Text></View>
-          ))}
-          <TouchableOpacity onPress={handleClearData} style={styles.clearButton}>
-            <Text style={styles.clearButtonText}>Clear transaction data</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Friends activity</Text>
-          <Text style={styles.largeValue}>{friendCount}</Text>
-          <Text style={styles.sectionCopy}>
-            Borrowed and given transactions are counted here so you can track shared money separately.
-          </Text>
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Latest transaction</Text>
-          {latestTransaction ? (
-            <>
-              <Text style={styles.latestTitle}>
-                {latestTransaction.recipient ||
-                  latestTransaction.category ||
-                  latestTransaction.note ||
-                  latestTransaction.type}
-              </Text>
-              <Text style={styles.latestMeta}>
-                {latestTransaction.type} · {formatCurrency(latestTransaction.amount)}
-              </Text>
-            </>
-          ) : (
-            <Text style={styles.sectionCopy}>
-              No activity yet. Add an income, expense, or friend entry to populate this.
-            </Text>
-          )}
         </View>
 
         <View style={styles.sectionCard}>
@@ -186,6 +148,8 @@ export default function ProfileScreen({
           </TouchableOpacity>
         </View>
       </ScrollView>
+      {success && <Animated.View entering={FadeIn.duration(250)} exiting={FadeOut.duration(250)} style={styles.success}><Text style={styles.successText}>✓ Profile Updated</Text></Animated.View>}
+      <EditProfileSheet visible={editing} profile={profile} onClose={() => setEditing(false)} onSave={saveProfile}/>
     </SafeAreaView>
   );
 }
@@ -207,18 +171,18 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.surfaceAlt,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
   },
-  avatarText: { color: colors.text, fontSize: 22, fontWeight: '800' },
   heroTitle: {
     color: colors.text,
     fontSize: 34,
     fontWeight: '800',
     marginBottom: 10,
   },
+  profileEmail: { color: colors.textMuted, fontSize: 14, marginTop: -4 },
   heroCopy: {
     color: colors.accent,
     fontSize: 16,
@@ -242,7 +206,6 @@ const styles = StyleSheet.create({
   historyName: { color: colors.text, fontSize: 13, fontWeight: '700', marginBottom: 3 },
   historyMeta: { color: colors.textMuted, fontSize: 10 },
   historyAmount: { fontSize: 13, fontWeight: '800' },
-  historyIncome: { color: colors.success },
   historyExpense: { color: colors.dangerSoft },
   metricCard: {
     flex: 1,
@@ -280,12 +243,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 14,
     lineHeight: 22,
-  },
-  largeValue: {
-    color: colors.primarySoft,
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 6,
   },
   latestTitle: {
     color: colors.text,
@@ -326,4 +283,6 @@ const styles = StyleSheet.create({
     marginTop: 18,
   },
   clearButtonText: { color: colors.dangerSoft, fontSize: 14, fontWeight: '700' },
+  success: { position: 'absolute', alignSelf: 'center', bottom: 104, backgroundColor: '#2f7d55', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 18, shadowColor: '#000', shadowOpacity: .2, shadowRadius: 10, elevation: 5 },
+  successText: { color: '#fff', fontWeight: '800' },
 });
