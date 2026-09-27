@@ -1,7 +1,9 @@
+import { Platform } from 'react-native';
 import { getApps, initializeApp } from 'firebase/app';
-import { 
-  initializeAuth, 
-  getReactNativePersistence 
+import {
+  getAuth,
+  initializeAuth,
+  getReactNativePersistence
 } from 'firebase/auth';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -43,24 +45,35 @@ const initializeNamedApp = (name, config) => {
 const primaryConfig = readConfig('EXPO_PUBLIC_FIREBASE_');
 const backupConfig = readConfig('EXPO_PUBLIC_BACKUP_FIREBASE_');
 
-export const primaryFirebaseEnabled = hasRequiredConfig(primaryConfig);
-export const backupFirebaseEnabled = hasRequiredConfig(backupConfig);
+const primaryFirebaseEnabled = hasRequiredConfig(primaryConfig);
+const backupFirebaseEnabled = hasRequiredConfig(backupConfig);
 
-export const primaryApp = primaryFirebaseEnabled
+const primaryApp = primaryFirebaseEnabled
   ? initializeNamedApp('[DEFAULT]', primaryConfig)
   : null;
 
-export const backupApp = backupFirebaseEnabled
+const backupApp = backupFirebaseEnabled
   ? initializeNamedApp('backup', backupConfig)
   : null;
 
-export const primaryDb = primaryApp ? getFirestore(primaryApp) : null;
-export const backupDb = backupApp ? getFirestore(backupApp) : null;
-export const primaryAuth = primaryApp
-  ? initializeAuth(primaryApp, {
-      persistence: getReactNativePersistence(AsyncStorage),
-    })
-  : null;
+const primaryDb = primaryApp ? getFirestore(primaryApp) : null;
+const backupDb = backupApp ? getFirestore(backupApp) : null;
+// initializeAuth throws `auth/already-initialized` if this module is evaluated
+// twice — which Fast Refresh does on every edit — so fall back to the instance
+// that already exists instead of taking the whole app down in development.
+const createAuth = (app) => {
+  try {
+    return Platform.OS === 'web'
+      ? initializeAuth(app)
+      : initializeAuth(app, {
+          persistence: getReactNativePersistence(AsyncStorage),
+        });
+  } catch (_error) {
+    return getAuth(app);
+  }
+};
+
+export const primaryAuth = primaryApp ? createAuth(primaryApp) : null;
 
 export const getConfiguredDatabases = () =>
   [

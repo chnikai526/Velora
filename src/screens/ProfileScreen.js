@@ -1,288 +1,273 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { signOut, updateEmail, updateProfile } from 'firebase/auth';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect, useScrollToTop } from '@react-navigation/native';
+import { signOut, updateProfile, verifyBeforeUpdateEmail } from 'firebase/auth';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { primaryAuth } from '../lib/firebase';
-import colors from '../theme/colors';
+import { CARD_GAP, colors, GUTTER, radius, SECTION_GAP, tabBarClearance, type } from '../theme';
 import AnimalAvatar from '../components/avatars/AnimalAvatar';
 import EditProfileSheet from '../components/EditProfileSheet';
+import TransactionsHistorySheet from '../components/TransactionsHistorySheet';
+import CategoriesManagerSheet from '../components/CategoriesManagerSheet';
+import MonthlyBudgetSheet from '../components/MonthlyBudgetSheet';
+import NotificationsSheet from '../components/NotificationsSheet';
+import CurrencyConverterSheet from '../components/CurrencyConverterSheet';
+import SpendingChart from '../components/SpendingChart';
+import MetricCard from '../components/MetricCard';
+import IconButton from '../components/IconButton';
+import Button from '../components/Button';
+import Card from '../components/Card';
+import ListRow from '../components/ListRow';
+import { getMonthlyExpenseSeries, loadMonthlyBudget } from '../lib/budget';
+import { buildNotifications, loadReadIds } from '../lib/notifications';
+import { loadProfile, saveProfile as persistProfile } from '../lib/profile';
+import { formatMoney } from '../lib/format';
+import { confirmAction, showNotice } from '../lib/confirm';
 
-const formatCurrency = (value) => `$${value.toFixed(2)}`;
+const emailChangeError = (error) => {
+  switch (error?.code) {
+    case 'auth/requires-recent-login':
+      return 'For your security, log out and sign back in, then change your email again.';
+    case 'auth/email-already-in-use':
+      return 'That email is already used by another account.';
+    case 'auth/invalid-email':
+      return 'That email address looks invalid.';
+    case 'auth/network-request-failed':
+      return 'Network error. Check your connection and try again.';
+    default:
+      return 'Firebase could not start the email change right now. Your other changes were saved.';
+  }
+};
 
-export default function ProfileScreen({
-  currentUser,
-  transactions,
-}) {
-  const expenseTransactions = transactions.filter((item) => item.type === 'Expense');
-  const totalTracked = expenseTransactions.reduce((sum, item) => sum + item.amount, 0);
-  const fallbackProfile = { name: currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Velora member', email: currentUser?.email || '', dateOfBirth: '2000-01-01T00:00:00.000Z', avatarId: 'cat' };
+export default function ProfileScreen({ currentUser, transactions, updateTransaction, removeTransaction, navigation }) {
+  const uid = currentUser?.uid;
+  // Email always comes from the signed-in account: the old code showed the
+  // locally saved copy, so a failed email change still displayed the new
+  // address even though sign-in kept using the old one.
+  const accountEmail = currentUser?.email || '';
+  const fallbackProfile = useMemo(() => ({
+    name: currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Velora member',
+    email: accountEmail,
+    dateOfBirth: null,
+    avatarId: 'cat',
+  }), [currentUser?.displayName, currentUser?.email, accountEmail]);
   const [profile, setProfile] = useState(fallbackProfile);
   const [editing, setEditing] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [converterOpen, setConverterOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [budget, setBudget] = useState(0);
   const [success, setSuccess] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(1);
-  const monthOptions = useMemo(() => Array.from({ length: 6 }, (_, index) => {
-    const date = new Date();
-    date.setMonth(date.getMonth() - index);
-    return {
-      key: `${date.getFullYear()}-${date.getMonth()}-${index}`,
-      label: new Intl.DateTimeFormat('en-US', { month: 'short' }).format(date),
-      year: date.getFullYear(),
-      month: date.getMonth(),
-    };
-  }), []);
-  const selectedPeriod = monthOptions[selectedMonth];
-  const pastTransactions = expenseTransactions.filter((item) => {
-    const date = new Date(item.date || item.createdAt);
-    return date.getFullYear() === selectedPeriod.year && date.getMonth() === selectedPeriod.month;
-  });
+  const successTimer = useRef(null);
+  const scrollRef = useRef(null);
+  const insets = useSafeAreaInsets();
+  useScrollToTop(scrollRef);
 
-  const handleLogout = () => {
-    Alert.alert('Log out?', 'You will be sent back to the login screen.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Log out',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await signOut(primaryAuth);
-          } catch (_error) {
-            Alert.alert(
-              'Unable to log out',
-              'Firebase could not end your session right now.'
-            );
-          }
-        },
-      },
-    ]);
-  };
+  useEffect(() => () => clearTimeout(successTimer.current), []);
+
+  // Budget and unread count are re-read whenever the tab gains focus or the
+  // transactions change, so edits made elsewhere show up here.
+  const refresh = useCallback(() => {
+    let active = true;
+    Promise.all([loadReadIds(uid), loadMonthlyBudget(uid)]).then(([ids, budgetAmount]) => {
+      if (!active) return;
+      const items = buildNotifications({ transactions, budgetAmount });
+      setBudget(budgetAmount);
+      setUnreadCount(items.filter((item) => !ids.has(item.id)).length);
+    });
+    return () => { active = false; };
+  }, [uid, transactions]);
+
+  useFocusEffect(refresh);
 
   useEffect(() => {
     let active = true;
-    AsyncStorage.getItem(`velora-profile-${currentUser?.uid || 'guest'}`).then((saved) => {
-      if (active && saved) setProfile(JSON.parse(saved));
-    }).catch(() => undefined);
+    loadProfile(uid).then((saved) => { if (active && saved) setProfile({ ...saved, email: accountEmail }); });
     return () => { active = false; };
-  }, [currentUser?.uid]);
+  }, [uid, accountEmail]);
+
+  const handleLogout = () => confirmAction({
+    title: 'Log out?',
+    message: 'You will be sent back to the login screen.',
+    confirmLabel: 'Log out',
+    destructive: true,
+    onConfirm: async () => {
+      try {
+        await signOut(primaryAuth);
+      } catch (_error) {
+        showNotice('Unable to log out', 'Firebase could not end your session right now.');
+      }
+    },
+  });
+
+  const flashSuccess = () => {
+    setSuccess(true);
+    clearTimeout(successTimer.current);
+    successTimer.current = setTimeout(() => setSuccess(false), 2000);
+  };
 
   const saveProfile = async (nextProfile) => {
-    const cleanProfile = { name: nextProfile.name, email: nextProfile.email, dateOfBirth: nextProfile.dateOfBirth, avatarId: nextProfile.avatarId };
+    const wantsNewEmail = Boolean(currentUser) && nextProfile.email && nextProfile.email !== accountEmail;
+    const cleanProfile = { name: nextProfile.name, email: accountEmail, dateOfBirth: nextProfile.dateOfBirth || null, avatarId: nextProfile.avatarId };
     setProfile(cleanProfile);
     setEditing(false);
-    setSuccess(true);
-    setTimeout(() => setSuccess(false), 2000);
-    await AsyncStorage.setItem(`velora-profile-${currentUser?.uid || 'guest'}`, JSON.stringify(cleanProfile));
+    flashSuccess();
+    try {
+      await persistProfile(uid, cleanProfile);
+    } catch (_error) {
+      showNotice('Profile not saved', 'Your device storage could not be written. Try again.');
+      return;
+    }
     if (!currentUser) return;
     try {
       await updateProfile(currentUser, { displayName: cleanProfile.name });
-      if (cleanProfile.email !== currentUser.email) await updateEmail(currentUser, cleanProfile.email);
     } catch (_error) {
-      // The saved local profile remains current even if Firebase requires a recent sign-in.
+      // The local profile is the source of truth for the name on this device.
+    }
+    if (!wantsNewEmail) return;
+    // `updateEmail` is rejected outright on projects with email-enumeration
+    // protection (the Firebase default), so the change never happened. The
+    // supported flow emails a confirmation link to the new address.
+    try {
+      await verifyBeforeUpdateEmail(currentUser, nextProfile.email);
+      showNotice('Confirm your new email', `We sent a link to ${nextProfile.email}. Your sign-in email changes once you open it.`);
+    } catch (error) {
+      showNotice('Email not changed', emailChangeError(error));
     }
   };
 
+  const series = useMemo(() => getMonthlyExpenseSeries(transactions), [transactions]);
+  const thisMonth = series[series.length - 1]?.value || 0;
+  const totalTracked = useMemo(() => transactions.filter((item) => item.type === 'Expense').reduce((sum, item) => sum + item.amount, 0), [transactions]);
   const name = profile.name || fallbackProfile.name;
+  const tabClearance = tabBarClearance(insets.bottom);
+
+  const pages = [
+    { key: 'transactions', label: 'Transactions', icon: 'receipt-outline', onPress: () => setHistoryOpen(true) },
+    { key: 'categories', label: 'Categories', icon: 'pricetags-outline', onPress: () => setCategoriesOpen(true) },
+    { key: 'budget', label: 'Monthly budget', icon: 'wallet-outline', onPress: () => setBudgetOpen(true) },
+    { key: 'converter', label: 'Currency converter', icon: 'swap-horizontal-outline', onPress: () => setConverterOpen(true) },
+    { key: 'notifications', label: 'Notifications', icon: 'notifications-outline', onPress: () => setNotificationsOpen(true), badge: unreadCount },
+  ];
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.heroCard}>
-          <TouchableOpacity onPress={() => setEditing(true)} style={styles.avatar}><AnimalAvatar avatarId={profile.avatarId} size={54}/></TouchableOpacity>
-          <TouchableOpacity onPress={() => setEditing(true)}><Text style={styles.heroTitle}>{name}</Text></TouchableOpacity>
-          <Text style={styles.profileEmail}>{profile.email}</Text>
-        </View>
-
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Total entries</Text>
-            <Text style={styles.metricValue}>{transactions.length}</Text>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <ScrollView ref={scrollRef} contentContainerStyle={[styles.content, { paddingBottom: tabClearance + SECTION_GAP }]} showsVerticalScrollIndicator={false}>
+        <View style={styles.profileCard}>
+          <View style={styles.topRow}>
+            <IconButton accessibilityLabel="Notifications" onPress={() => setNotificationsOpen(true)} icon={<Ionicons name="notifications-outline" size={19} color={colors.text} />} />
+            <IconButton accessibilityLabel="Edit profile" onPress={() => setEditing(true)} icon={<Ionicons name="create-outline" size={19} color={colors.text} />} />
           </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Tracked amount</Text>
-            <Text style={styles.metricValue}>{formatCurrency(totalTracked)}</Text>
+          <View style={styles.avatarRing}>
+            <AnimalAvatar avatarId={profile.avatarId} size={100} />
           </View>
+          <Text style={styles.name}>{name}</Text>
+          {accountEmail ? <Text style={styles.email}>{accountEmail}</Text> : null}
         </View>
 
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Transactions</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.monthRow}>
-            {monthOptions.map((item, index) => (
-              <TouchableOpacity key={item.key} onPress={() => setSelectedMonth(index)} style={[styles.monthChip, selectedMonth === index && styles.monthChipActive]}>
-                <Text style={[styles.monthChipText, selectedMonth === index && styles.monthChipTextActive]}>{item.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-          {pastTransactions.length === 0 ? (
-            <Text style={styles.historyEmpty}>No transactions in {selectedPeriod.label}.</Text>
-          ) : pastTransactions.map((item) => (
-            <View key={item.id} style={styles.historyItem}>
-              <View style={styles.historyIcon}><Text style={styles.historyIconText}>−</Text></View>
-              <View style={styles.historyInfo}><Text style={styles.historyName}>{item.category || item.note || 'Expense'}</Text><Text style={styles.historyMeta}>{new Date(item.date || item.createdAt).toLocaleDateString()}</Text></View>
-              <Text style={[styles.historyAmount, styles.historyExpense]}>−{formatCurrency(item.amount)}</Text>
-            </View>
+        <Card style={styles.chartCard} contentStyle={styles.chartContent}>
+          <View style={styles.chartHeader}>
+            <Text style={styles.chartLabel}>Spent this month</Text>
+            <Text style={styles.chartRange}>{budget > 0 ? `Budget ${formatMoney(budget)}` : 'Last 6 months'}</Text>
+          </View>
+          <Text style={styles.chartValue}>{formatMoney(thisMonth)}</Text>
+          <SpendingChart data={series} budget={budget} />
+        </Card>
+
+        <View style={styles.metricsRow}>
+          <MetricCard label="Total entries" value={String(transactions.length)} style={styles.metric} arrow={null} onPress={() => setHistoryOpen(true)} />
+          <MetricCard label="Tracked spend" value={formatMoney(totalTracked)} style={styles.metric} arrow={null} onPress={() => setHistoryOpen(true)} />
+        </View>
+
+        <Card contentStyle={styles.menuContent} style={styles.menuCard}>
+          {pages.map((page, index) => (
+            <ListRow
+              key={page.key}
+              icon={<Ionicons name={page.icon} />}
+              title={page.label}
+              onPress={page.onPress}
+              showDivider={index < pages.length - 1}
+              right={
+                <>
+                  {page.badge > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{page.badge}</Text>
+                    </View>
+                  )}
+                  <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                </>
+              }
+            />
           ))}
-        </View>
+        </Card>
 
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Preferences</Text>
-          {['Transactions', 'Monthly budget', 'Currency · CAD', 'Notifications', 'Security'].map((item) => (
-            <View key={item} style={styles.preferenceRow}><Text style={styles.preferenceText}>{item}</Text><Text style={styles.chevron}>›</Text></View>
-          ))}
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Session</Text>
-          <Text style={styles.sectionCopy}>
-            End your current session and return to the login page.
-          </Text>
-          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <Text style={styles.logoutButtonText}>Log out</Text>
-          </TouchableOpacity>
-        </View>
+        <Button label="Log out" variant="danger" size="md" onPress={handleLogout} icon={<Ionicons name="log-out-outline" size={18} color={colors.negative} />} />
       </ScrollView>
-      {success && <Animated.View entering={FadeIn.duration(250)} exiting={FadeOut.duration(250)} style={styles.success}><Text style={styles.successText}>✓ Profile Updated</Text></Animated.View>}
-      <EditProfileSheet visible={editing} profile={profile} onClose={() => setEditing(false)} onSave={saveProfile}/>
+      <LinearGradient colors={['rgba(19,19,19,0)', colors.bg]} style={[styles.bottomScrim, { height: tabClearance + 36 }]} pointerEvents="none" />
+      {success && (
+        <Animated.View entering={FadeIn.duration(250)} exiting={FadeOut.duration(250)} style={[styles.success, { bottom: tabClearance + 12 }]}>
+          <Ionicons name="checkmark-circle" size={16} color={colors.positive} />
+          <Text style={styles.successText}>Profile updated</Text>
+        </Animated.View>
+      )}
+      <EditProfileSheet visible={editing} profile={{ ...profile, email: accountEmail }} onClose={() => setEditing(false)} onSave={saveProfile} />
+      <TransactionsHistorySheet
+        visible={historyOpen}
+        transactions={transactions}
+        uid={uid}
+        onUpdate={updateTransaction}
+        onRemove={removeTransaction}
+        onClose={() => { setHistoryOpen(false); refresh(); }}
+      />
+      <CategoriesManagerSheet visible={categoriesOpen} uid={uid} onClose={() => setCategoriesOpen(false)} />
+      <MonthlyBudgetSheet visible={budgetOpen} uid={uid} transactions={transactions} onClose={() => { setBudgetOpen(false); refresh(); }} />
+      <NotificationsSheet visible={notificationsOpen} uid={uid} transactions={transactions} onClose={() => { setNotificationsOpen(false); refresh(); }} />
+      <CurrencyConverterSheet
+        visible={converterOpen}
+        onClose={() => setConverterOpen(false)}
+        onViewAllRates={(params) => {
+          // The full rates list lives on the root stack, so dismiss the sheet
+          // first — otherwise the pushed screen renders behind it.
+          setConverterOpen(false);
+          (navigation?.getParent() ?? navigation)?.navigate('ExchangeRates', params);
+        }}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    padding: 24,
-    paddingBottom: 116,
-  },
-  heroCard: {
-    paddingVertical: 12,
-    marginBottom: 20,
-  },
-  avatar: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: colors.surfaceAlt,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  heroTitle: {
-    color: colors.text,
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 10,
-  },
-  profileEmail: { color: colors.textMuted, fontSize: 14, marginTop: -4 },
-  heroCopy: {
-    color: colors.accent,
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  monthRow: { gap: 8, paddingTop: 16, paddingBottom: 14 },
-  monthChip: { backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border, borderRadius: 15, paddingHorizontal: 14, paddingVertical: 10 },
-  monthChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  monthChipText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
-  monthChipTextActive: { color: colors.text },
-  historyEmpty: { color: colors.textMuted, fontSize: 13, paddingVertical: 8 },
-  historyItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderTopWidth: 1, borderTopColor: colors.border },
-  historyIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceAlt, marginRight: 10 },
-  historyIconText: { color: colors.primarySoft, fontSize: 17, fontWeight: '800' },
-  historyInfo: { flex: 1 },
-  historyName: { color: colors.text, fontSize: 13, fontWeight: '700', marginBottom: 3 },
-  historyMeta: { color: colors.textMuted, fontSize: 10 },
-  historyAmount: { fontSize: 13, fontWeight: '800' },
-  historyExpense: { color: colors.dangerSoft },
-  metricCard: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: 24,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  metricLabel: {
-    color: colors.textMuted,
-    fontSize: 13,
-    marginBottom: 8,
-  },
-  metricValue: {
-    color: colors.text,
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  sectionCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 28,
-    padding: 20,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  sectionTitle: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 10,
-  },
-  sectionCopy: {
-    color: colors.textMuted,
-    fontSize: 14,
-    lineHeight: 22,
-  },
-  latestTitle: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  latestMeta: {
-    color: colors.textMuted,
-    fontSize: 14,
-  },
-  logoutButton: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 20,
-    paddingVertical: 15,
-    alignItems: 'center',
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  logoutButtonText: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  preferenceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 14,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-  },
-  preferenceText: { color: colors.textSoft, fontSize: 15, fontWeight: '600' },
-  chevron: { color: colors.textMuted, fontSize: 24, lineHeight: 24 },
-  clearButton: {
-    alignSelf: 'flex-start',
-    marginTop: 18,
-  },
-  clearButtonText: { color: colors.dangerSoft, fontSize: 14, fontWeight: '700' },
-  success: { position: 'absolute', alignSelf: 'center', bottom: 104, backgroundColor: '#2f7d55', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 18, shadowColor: '#000', shadowOpacity: .2, shadowRadius: 10, elevation: 5 },
-  successText: { color: '#fff', fontWeight: '800' },
+  safeArea: { flex: 1, backgroundColor: colors.bg },
+  content: { paddingHorizontal: GUTTER, paddingTop: 8 },
+
+  profileCard: { backgroundColor: colors.surface, borderRadius: radius.xl, padding: 18, paddingBottom: 30, alignItems: 'center', marginBottom: CARD_GAP },
+  topRow: { alignSelf: 'stretch', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+  avatarRing: { width: 112, height: 112, borderRadius: 56, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  name: { ...type.display, fontSize: 34, lineHeight: 38, color: colors.text, textAlign: 'center', marginTop: 18, maxWidth: 260 },
+  email: { ...type.body, fontSize: 14, color: colors.textSoft, marginTop: 10 },
+
+  chartCard: { marginBottom: CARD_GAP },
+  chartContent: { padding: 20, paddingBottom: 18 },
+  chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  chartLabel: { ...type.label, fontSize: 16, color: colors.textSoft },
+  chartRange: { ...type.body, fontSize: 14, color: colors.textMuted },
+  chartValue: { ...type.value, color: colors.text, marginTop: 6, marginBottom: 16 },
+
+  metricsRow: { flexDirection: 'row', gap: CARD_GAP, marginBottom: CARD_GAP },
+  metric: { flex: 1 },
+
+  menuCard: { marginBottom: SECTION_GAP },
+  menuContent: { paddingVertical: 4, paddingHorizontal: 16 },
+  badge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+  badgeText: { ...type.numeric, fontSize: 11, color: colors.accentText },
+
+  bottomScrim: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  success: { position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.surfaceRaised, paddingHorizontal: 18, height: 44, borderRadius: radius.pill },
+  successText: { ...type.label, color: colors.text },
 });

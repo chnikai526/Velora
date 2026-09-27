@@ -1,37 +1,36 @@
 import 'react-native-gesture-handler';
-import React, { useCallback, useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { NavigationContainer } from '@react-navigation/native';
+import { DarkTheme, NavigationContainer } from '@react-navigation/native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider, useDispatch, useSelector } from 'react-redux';
 import { onAuthStateChanged } from 'firebase/auth';
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  setDoc,
-} from 'firebase/firestore';
+import * as SplashScreen from 'expo-splash-screen';
+import { useFonts, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
+import { collection, deleteDoc, doc, getDocs, setDoc } from 'firebase/firestore';
 import AppNavigator from './src/navigation/AppNavigator';
 import {
   addTransaction as addTransactionAction,
-  clearTransactions as clearTransactionsAction,
   removeTransaction as removeTransactionAction,
-  setCloudDataLoading,
   setCurrentUser,
   setTransactions,
   finishPostLoginLoading,
-  settleTransaction as settleTransactionAction,
   updateTransaction as updateTransactionAction,
 } from './redux/Actions';
-import {
-  backupFirebaseEnabled,
-  getConfiguredDatabases,
-  primaryAuth,
-  primaryFirebaseEnabled,
-} from './src/lib/firebase';
-import colors from './src/theme/colors';
+import { getConfiguredDatabases, primaryAuth } from './src/lib/firebase';
+import { collectDueOccurrences, countElapsedOccurrences, isValidInterval } from './src/lib/recurring';
+import { colors } from './src/theme';
 import store from './redux/Store';
+
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Dark navigation theme so screen transitions and the native header never
+// flash white between the app's dark surfaces.
+const navigationTheme = {
+  ...DarkTheme,
+  colors: { ...DarkTheme.colors, background: colors.bg, card: colors.bg, text: colors.text, primary: colors.accent, border: 'transparent' },
+};
 
 const getTransactionsCollection = (db, userId) =>
   collection(db, 'users', userId, 'transactions');
@@ -53,12 +52,19 @@ const parseTransaction = (snapshot) => {
     paymentMethod: data.paymentMethod ?? '',
     recurring: Boolean(data.recurring),
     repeatInterval: data.repeatInterval ?? null,
+    occurrencesGenerated: Number(data.occurrencesGenerated) || 0,
+    recurringSourceId: data.recurringSourceId ?? null,
     status: data.status ?? 'active',
     settledAt: data.settledAt ?? null,
     date: data.date ?? data.createdAt ?? fallbackTimestamp,
     createdAt: data.createdAt ?? fallbackTimestamp,
+    updatedAt: data.updatedAt ?? null,
   };
 };
+
+// Edits keep `createdAt`, so compare the last write instead — otherwise an
+// edit that reached only one database could lose to the stale copy.
+const lastWrite = (transaction) => transaction.updatedAt || transaction.createdAt;
 
 const mergeTransactions = (collections) => {
   const merged = new Map();
@@ -66,7 +72,7 @@ const mergeTransactions = (collections) => {
   collections.flat().forEach((transaction) => {
     const existing = merged.get(transaction.id);
 
-    if (!existing || transaction.createdAt > existing.createdAt) {
+    if (!existing || lastWrite(transaction) > lastWrite(existing)) {
       merged.set(transaction.id, transaction);
     }
   });
@@ -104,25 +110,14 @@ const removeTransactionFromCloud = async (userId, transactionId) => {
   );
 };
 
-const clearTransactionsFromCloud = async (userId) => {
-  const databases = getConfiguredDatabases();
-
-  if (!userId || databases.length === 0) {
-    return;
-  }
-
-  await Promise.allSettled(
-    databases.map(async ({ db }) => {
-      const snapshot = await getDocs(getTransactionsCollection(db, userId));
-      await Promise.all(snapshot.docs.map((item) => deleteDoc(item.ref)));
-    })
-  );
-};
-
 function VeloraApp() {
   const dispatch = useDispatch();
   const { currentUser, isPostLoginLoading } = useSelector((state) => state.auth);
-  const { hasLoadedCloudData, transactions } = useSelector((state) => state.transactions);
+  const { transactions } = useSelector((state) => state.transactions);
+  // uid whose transactions finished loading. Recurring copies are only
+  // generated after that, so a half-loaded list can't produce duplicates.
+  const [loadedUid, setLoadedUid] = useState(null);
+  const [resumeTick, setResumeTick] = useState(0);
 
   useEffect(() => {
     if (!primaryAuth) {
@@ -140,24 +135,12 @@ function VeloraApp() {
     let isMounted = true;
 
     const loadTransactions = async () => {
-      if (isMounted) {
-        dispatch(setCloudDataLoading(false));
-      }
-
-      if (!currentUser) {
-        if (isMounted) {
-          dispatch(setTransactions([]));
-          dispatch(setCloudDataLoading(true));
-        }
-        return;
-      }
-
       const databases = getConfiguredDatabases();
 
-      if (databases.length === 0) {
+      if (!currentUser || databases.length === 0) {
         if (isMounted) {
           dispatch(setTransactions([]));
-          dispatch(setCloudDataLoading(true));
+          setLoadedUid(null);
         }
         return;
       }
@@ -177,7 +160,7 @@ function VeloraApp() {
 
       if (isMounted) {
         dispatch(setTransactions(mergeTransactions(transactionCollections)));
-        dispatch(setCloudDataLoading(true));
+        setLoadedUid(currentUser.uid);
       }
     };
 
@@ -187,6 +170,46 @@ function VeloraApp() {
       isMounted = false;
     };
   }, [currentUser, dispatch]);
+
+  // Re-check recurring entries when the app returns to the foreground, so a
+  // phone left open overnight still picks up today's copies.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') setResumeTick((tick) => tick + 1);
+    });
+    return () => subscription.remove();
+  }, []);
+
+  const lastRecurringRun = useRef(null);
+  useEffect(() => {
+    if (!currentUser || loadedUid !== currentUser.uid) return;
+    const { created, templates } = collectDueOccurrences(transactions);
+    if (!created.length && !templates.length) return;
+    // Guard against re-dispatching the same batch if this effect runs again
+    // before the store update lands.
+    const signature = created.map((item) => item.id).join(',');
+    if (signature && lastRecurringRun.current === signature) return;
+    lastRecurringRun.current = signature;
+    created.forEach((item) => {
+      dispatch(addTransactionAction(item));
+      void syncTransactionToCloud(currentUser.uid, item);
+    });
+    templates.forEach((item) => {
+      dispatch(updateTransactionAction(item));
+      void syncTransactionToCloud(currentUser.uid, item);
+    });
+  }, [transactions, currentUser, loadedUid, resumeTick, dispatch]);
+
+  // Count the repeats already behind us when a schedule is saved, so turning
+  // Repeat on for an old entry doesn't instantly backfill months of copies.
+  const scheduleFields = (entry, date) => {
+    const recurring = Boolean(entry.recurring) && isValidInterval(entry.repeatInterval);
+    return {
+      recurring,
+      repeatInterval: recurring ? entry.repeatInterval : null,
+      occurrencesGenerated: recurring ? countElapsedOccurrences(date, entry.repeatInterval) : 0,
+    };
+  };
 
   const addTransaction = (entry) => {
     if (!currentUser) {
@@ -199,18 +222,18 @@ function VeloraApp() {
       return { ok: false, message: 'Enter a valid amount greater than 0.' };
     }
 
+    const date = entry.date ?? new Date().toISOString();
     const normalizedTransaction = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      amount,
+      amount: Math.round(amount * 100) / 100,
       note: entry.note?.trim() ?? '',
       category: entry.category?.trim() ?? '',
       recipient: entry.recipient?.trim() ?? '',
-      type: 'Expense',
+      type: entry.type === 'Income' ? 'Income' : 'Expense',
       paymentMethod: '',
-      recurring: Boolean(entry.recurring),
-      repeatInterval: entry.repeatInterval ?? null,
+      ...scheduleFields(entry, date),
       status: entry.status ?? 'active',
-      date: entry.date ?? new Date().toISOString(),
+      date,
       createdAt: new Date().toISOString(),
     };
 
@@ -241,17 +264,22 @@ function VeloraApp() {
       return { ok: false, message: 'Enter a valid amount greater than 0.' };
     }
 
+    const date = entry.date ?? existingTransaction.date;
+    const scheduleChanged = Boolean(entry.recurring) !== Boolean(existingTransaction.recurring)
+      || (entry.repeatInterval ?? null) !== (existingTransaction.repeatInterval ?? null)
+      || date !== existingTransaction.date;
     const updatedTransaction = {
       ...existingTransaction,
-      amount,
+      amount: Math.round(amount * 100) / 100,
       note: entry.note?.trim() ?? '',
       category: entry.category?.trim() ?? '',
       recipient: entry.recipient?.trim() ?? '',
-      type: 'Expense',
+      type: entry.type === 'Income' ? 'Income' : 'Expense',
       paymentMethod: '',
-      recurring: Boolean(entry.recurring),
-      repeatInterval: entry.repeatInterval ?? null,
-      date: entry.date ?? existingTransaction.date,
+      // Only restart the repeat counter when the schedule itself changed;
+      // editing the amount or note keeps the copies already made.
+      ...(scheduleChanged ? scheduleFields(entry, date) : {}),
+      date,
       updatedAt: new Date().toISOString(),
     };
 
@@ -261,51 +289,44 @@ function VeloraApp() {
     return { ok: true, transaction: updatedTransaction };
   };
 
-  const clearTransactions = () => {
-    dispatch(clearTransactionsAction());
-    void clearTransactionsFromCloud(currentUser?.uid);
-  };
-
-  const settleTransaction = (transactionId) => {
-    const transaction = transactions.find((item) => item.id === transactionId);
-    if (!transaction || !currentUser) return;
-    const settledTransaction = { ...transaction, status: 'settled', settledAt: new Date().toISOString() };
-    dispatch(settleTransactionAction(settledTransaction));
-    void syncTransactionToCloud(currentUser.uid, settledTransaction);
-  };
-
   const completePostLoginLoading = useCallback(() => {
     dispatch(finishPostLoginLoading());
   }, [dispatch]);
 
   return (
-    <View style={styles.shell}>
-      <StatusBar style="light" />
-      <View style={styles.appFrame}>
-        <NavigationContainer>
+    <SafeAreaProvider>
+      <View style={styles.shell}>
+        <StatusBar style="light" />
+        <NavigationContainer theme={navigationTheme}>
           <AppNavigator
             currentUser={currentUser}
             transactions={transactions}
             addTransaction={addTransaction}
             updateTransaction={updateTransaction}
-            settleTransaction={settleTransaction}
             removeTransaction={removeTransaction}
-            clearTransactions={clearTransactions}
-            cloudStatus={{
-              hasLoadedCloudData,
-              primaryEnabled: primaryFirebaseEnabled,
-              backupEnabled: backupFirebaseEnabled,
-            }}
             isPostLoginLoading={isPostLoginLoading}
             completePostLoginLoading={completePostLoginLoading}
           />
         </NavigationContainer>
       </View>
-    </View>
+    </SafeAreaProvider>
   );
 }
 
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+  });
+
+  useEffect(() => {
+    if (fontsLoaded) SplashScreen.hideAsync();
+  }, [fontsLoaded]);
+
+  if (!fontsLoaded) return null;
+
   return (
     <Provider store={store}>
       <VeloraApp />
@@ -316,10 +337,6 @@ export default function App() {
 const styles = StyleSheet.create({
   shell: {
     flex: 1,
-    backgroundColor: '#05060f',
-  },
-  appFrame: {
-    flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: colors.bg,
   },
 });

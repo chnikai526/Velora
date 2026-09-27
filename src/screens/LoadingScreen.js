@@ -1,6 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Image, SafeAreaView, StyleSheet, Text, View } from 'react-native';
-import colors from '../theme/colors';
+import React, { useEffect, useState } from 'react';
+import { Animated, Image, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { colors, radius, type } from '../theme';
+import ScreenBackground from '../components/ScreenBackground';
+import TickRuler from '../components/TickRuler';
 
 const MOTIVATIONAL_API_URL = 'https://cdn.jsdelivr.net/gh/gomezmig03/MotivationalAPI/en.json';
 const FALLBACK_PHRASES = [
@@ -12,23 +15,17 @@ const FALLBACK_PHRASES = [
 const getMotivationalPhrase = (data) => {
   const phrases = Array.isArray(data) ? data : data?.phrases || data?.quotes || [];
   const nonReligiousPhrases = phrases.filter((item) => item?.religion === 0);
-  const phrase = nonReligiousPhrases[
-    Math.floor(Math.random() * nonReligiousPhrases.length)
-  ];
+  const phrase = nonReligiousPhrases[Math.floor(Math.random() * nonReligiousPhrases.length)];
 
-  if (typeof phrase === 'string') {
-    return phrase;
-  }
-
+  if (typeof phrase === 'string') return phrase;
   return phrase?.phrase || phrase?.quote || phrase?.text || phrase?.message || null;
 };
 
 export default function LoadingScreen({ onComplete }) {
-  const progressAnimation = useRef(new Animated.Value(0)).current;
-  const logoGlow = useRef(new Animated.Value(0.72)).current;
-  const logoLift = useRef(new Animated.Value(0)).current;
+  const [progressAnimation] = useState(() => new Animated.Value(0));
   const [progress, setProgress] = useState(0);
-  const [phrase, setPhrase] = useState(FALLBACK_PHRASES[0]);
+  const [fallback] = useState(() => FALLBACK_PHRASES[Math.floor(Math.random() * FALLBACK_PHRASES.length)]);
+  const [phrase, setPhrase] = useState(fallback);
 
   useEffect(() => {
     const listener = progressAnimation.addListener(({ value }) => setProgress(Math.round(value)));
@@ -37,9 +34,7 @@ export default function LoadingScreen({ onComplete }) {
       Animated.timing(progressAnimation, { toValue: 100, duration: 4000, useNativeDriver: false }),
     ]);
     const controller = new AbortController();
-    const fallback = FALLBACK_PHRASES[Math.floor(Math.random() * FALLBACK_PHRASES.length)];
 
-    setPhrase(fallback);
     animation.start();
     fetch(MOTIVATIONAL_API_URL, { signal: controller.signal })
       .then((response) => {
@@ -47,7 +42,7 @@ export default function LoadingScreen({ onComplete }) {
         return response.json();
       })
       .then((data) => setPhrase(getMotivationalPhrase(data) || fallback))
-      .catch(() => setPhrase(fallback));
+      .catch(() => undefined);
 
     const completeTimer = setTimeout(onComplete, 6000);
 
@@ -57,54 +52,42 @@ export default function LoadingScreen({ onComplete }) {
       controller.abort();
       clearTimeout(completeTimer);
     };
-  }, [onComplete, progressAnimation]);
-
-  useEffect(() => {
-    const animation = Animated.loop(Animated.sequence([
-      Animated.parallel([
-        Animated.timing(logoGlow, { toValue: 1, duration: 1200, useNativeDriver: true }),
-        Animated.timing(logoLift, { toValue: -5, duration: 1200, useNativeDriver: true }),
-      ]),
-      Animated.parallel([
-        Animated.timing(logoGlow, { toValue: 0.72, duration: 1200, useNativeDriver: true }),
-        Animated.timing(logoLift, { toValue: 0, duration: 1200, useNativeDriver: true }),
-      ]),
-    ]));
-    animation.start();
-    return () => animation.stop();
-  }, [logoGlow, logoLift]);
-
-  const width = progressAnimation.interpolate({
-    inputRange: [0, 100],
-    outputRange: ['0%', '100%'],
-  });
+  }, [fallback, onComplete, progressAnimation]);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.brand}><Animated.View style={{ opacity: logoGlow, transform: [{ translateY: logoLift }] }}><Image source={require('../../assets/icon.png')} style={styles.logo} /></Animated.View><Text style={styles.brandName}>Velora</Text></View>
-      <Text style={styles.tagline}>Tracking your finances has never been easier.</Text>
-      <View style={styles.spacer} />
-      <View style={styles.loadingArea}>
+    <ScreenBackground>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.brand}>
+          <Image source={require('../../assets/icon.png')} style={styles.logo} />
+          <Text style={styles.brandName}>Velora</Text>
+        </View>
+
+        <View style={styles.center}>
+          <Text style={styles.caption}>Preparing your{'\n'}money space</Text>
+          <Text style={styles.percent}>{progress}<Text style={styles.percentSign}>%</Text></Text>
+          <View style={styles.pill}>
+            <Text style={styles.pillText}>Syncing your data</Text>
+          </View>
+          <TickRuler ratio={progress / 100} style={styles.ruler} />
+        </View>
+
         <Text style={styles.phrase}>“{phrase}”</Text>
-        <View style={styles.progressRow}><Text style={styles.loadingLabel}>Preparing your money space</Text><Text style={styles.percent}>{progress}%</Text></View>
-        <View style={styles.track}><Animated.View style={[styles.fill, { width }]} /></View>
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.background, padding: 28 },
-  brand: { alignItems: 'center', marginTop: 22 },
-  logo: { width: 60, height: 60, borderRadius: 16, marginBottom: 10 },
-  brandName: { color: colors.text, fontSize: 23, fontWeight: '800', letterSpacing: 0.4 },
-  tagline: { color: colors.textSoft, fontSize: 16, lineHeight: 24, marginTop: 22, maxWidth: 270 },
-  spacer: { flex: 1 },
-  loadingArea: { paddingBottom: 18 },
-  phrase: { color: colors.primarySoft, fontSize: 16, fontStyle: 'italic', lineHeight: 24, textAlign: 'center', marginBottom: 28 },
-  progressRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  loadingLabel: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
-  percent: { color: colors.text, fontSize: 12, fontWeight: '800' },
-  track: { height: 10, overflow: 'hidden', borderRadius: 5, backgroundColor: colors.surfaceMuted },
-  fill: { height: '100%', borderRadius: 5, backgroundColor: colors.primary },
+  safeArea: { flex: 1, paddingHorizontal: 28, paddingBottom: 12 },
+  brand: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 16 },
+  logo: { width: 34, height: 34, borderRadius: 10 },
+  brandName: { ...type.heading, color: colors.text },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  caption: { ...type.heading, fontSize: 21, lineHeight: 25, color: colors.text, textAlign: 'center' },
+  percent: { ...type.hero, fontSize: 104, lineHeight: 116, color: colors.text, marginTop: 6 },
+  percentSign: { fontSize: 44, color: colors.textSoft },
+  pill: { height: 40, paddingHorizontal: 16, borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)', justifyContent: 'center' },
+  pillText: { ...type.label, fontSize: 16, color: colors.text },
+  ruler: { alignSelf: 'stretch', marginTop: 28 },
+  phrase: { ...type.body, fontStyle: 'italic', color: colors.textMuted, textAlign: 'center', marginBottom: 12 },
 });

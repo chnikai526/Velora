@@ -1,90 +1,302 @@
-import React, { useEffect, useState } from 'react';
-import {
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Platform, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import colors from '../theme/colors';
+import { LinearGradient } from 'expo-linear-gradient';
+import { CARD_GAP, colors, GUTTER, radius, scrim, SECTION_GAP, type } from '../theme';
+import { INCOME_CATEGORIES, SUGGESTED_CATEGORIES, categoryIcon, loadCategoryPrefs, resolveActiveCategories } from '../lib/categories';
+import { REPEAT_INTERVALS, describeInterval, isValidInterval, nextOccurrence } from '../lib/recurring';
+import { formatDateTime, formatLongDate, parseAmount } from '../lib/format';
+import useKeyboardOverlap from '../lib/useKeyboardOverlap';
+import Button from './Button';
+import Card from './Card';
+import Chip from './Chip';
+import ListRow from './ListRow';
+import AmountField from './AmountField';
+import GradientCard from './GradientCard';
+import SegmentedControl from './SegmentedControl';
+import SheetHeader from './SheetHeader';
+import Sheet, { SheetSurface } from './Sheet';
+import { useDatePicker } from './DatePicker';
 
-const EXPENSE_CATEGORIES = ['Food', 'Transport', 'Bills', 'Shopping', 'Entertainment', 'Health', 'Education', 'Subscriptions', 'Travel', 'Others'];
-const REPEAT_INTERVALS = ['Daily', 'Weekly', 'Monthly', 'Custom'];
+const SAVE_BUTTON_HEIGHT = 56;
 
-const getInitialValues = (transaction) => ({
-  amount: transaction?.amount ? String(transaction.amount) : '',
-  category: transaction?.category || EXPENSE_CATEGORIES[0],
-  note: transaction?.note || '',
-  recurring: Boolean(transaction?.recurring),
-  startDate: transaction?.date ? new Date(transaction.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
-  time: transaction?.date ? new Date(transaction.date).toTimeString().slice(0, 5) : new Date().toTimeString().slice(0, 5),
-  repeatInterval: transaction?.repeatInterval || 'Monthly',
-  type: 'Expense',
-});
+const TRANSACTION_TYPES = [
+  { key: 'Expense', label: 'Expense', icon: 'arrow-up' },
+  { key: 'Income', label: 'Income', icon: 'arrow-down' },
+];
 
-export default function TransactionFormModal({ visible = true, transaction, onClose, onSave, fullScreen = false }) {
-  const [values, setValues] = useState(getInitialValues(transaction));
-  const isEditing = Boolean(transaction);
+const validDate = (value) => {
+  const date = value ? new Date(value) : new Date();
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+};
+
+const getInitialValues = (transaction, categories) => {
+  const isIncome = transaction?.type === 'Income';
+  const list = isIncome ? INCOME_CATEGORIES : categories;
+  return {
+    amount: transaction?.amount ? String(transaction.amount) : '',
+    category: transaction?.category || list[0]?.label || '',
+    note: transaction?.note || '',
+    recurring: Boolean(transaction?.recurring),
+    date: validDate(transaction?.date),
+    // Older builds offered a "Custom" interval that had no settings behind it.
+    repeatInterval: isValidInterval(transaction?.repeatInterval) ? transaction.repeatInterval : 'Monthly',
+    type: isIncome ? 'Income' : 'Expense',
+  };
+};
+
+export default function TransactionFormModal({ visible = true, transaction, uid, onClose, onSave, onDelete, fullScreen = false }) {
+  const [categories, setCategories] = useState(SUGGESTED_CATEGORIES);
+  const [values, setValues] = useState(() => getInitialValues(transaction, SUGGESTED_CATEGORIES));
+  const insets = useSafeAreaInsets();
+  const containerRef = useRef(null);
+  const [keyboardOverlap, onContainerLayout] = useKeyboardOverlap(containerRef);
+  const datePicker = useDatePicker();
+  const scrollRef = useRef(null);
+
+  // Hold on to the transaction while the sheet slides away: the parent clears
+  // it as it closes, which flipped the title to "New expense" and emptied the
+  // form mid-animation.
+  const [shown, setShown] = useState(transaction);
+  if (transaction && transaction !== shown) setShown(transaction);
+  const current = transaction || (visible ? null : shown);
+  const isEditing = Boolean(current);
 
   useEffect(() => {
-    if (visible) {
-      setValues(getInitialValues(transaction));
-    }
-  }, [transaction, visible]);
+    if (!visible) return undefined;
+    let active = true;
+    loadCategoryPrefs(uid).then((prefs) => {
+      if (!active) return;
+      const resolved = resolveActiveCategories(prefs);
+      const next = resolved.length ? resolved : SUGGESTED_CATEGORIES;
+      setCategories(next);
+      // Income categories are fixed, so only re-seed when this is a new expense.
+      setValues((draft) => (isEditing || draft.type === 'Income' || next.some((item) => item.label === draft.category) ? draft : { ...draft, category: next[0].label }));
+    });
+    return () => { active = false; };
+  }, [visible, uid, isEditing]);
 
-  const save = () => {
-    const date = new Date(`${values.startDate}T${values.time || '00:00'}`);
-    onSave({ ...values, date: Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString() });
+  // Re-seed the form whenever it opens or switches to a different
+  // transaction. Done during render (not in an effect) so the first frame
+  // already shows the right values.
+  const [seededFor, setSeededFor] = useState({ transaction, visible });
+  if (seededFor.transaction !== transaction || seededFor.visible !== visible) {
+    setSeededFor({ transaction, visible });
+    if (visible) setValues(getInitialValues(transaction, categories));
+  }
+
+  const isIncome = values.type === 'Income';
+  const set = (patch) => setValues((draft) => ({ ...draft, ...patch }));
+
+  // Income draws from its own fixed list, expenses from the user's catalog.
+  // An edited transaction's category stays selectable even if it has since
+  // been switched off in Categories — otherwise no chip shows as selected.
+  const baseCategories = isIncome ? INCOME_CATEGORIES : categories;
+  const activeCategories = values.category && !baseCategories.some((item) => item.label === values.category)
+    ? [{ id: `current-${values.category}`, label: values.category, icon: categoryIcon(values.category) }, ...baseCategories]
+    : baseCategories;
+
+  const selectType = (nextType) => {
+    setValues((draft) => {
+      if (draft.type === nextType) return draft;
+      const nextList = nextType === 'Income' ? INCOME_CATEGORIES : categories;
+      // The old category belongs to the other list, so re-seed it.
+      const category = nextList.some((item) => item.label === draft.category) ? draft.category : nextList[0]?.label || '';
+      return { ...draft, type: nextType, category };
+    });
   };
 
-  const form = <View style={styles.safeArea}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.eyebrow}>{isEditing ? 'Edit expense' : 'New expense'}</Text>
-            <Text style={styles.title}>{isEditing ? 'Update your record' : 'Add an expense'}</Text>
+  const amountValue = parseAmount(values.amount);
+  const canSave = amountValue > 0;
+
+  const save = () => {
+    if (!canSave) return;
+    onSave({
+      ...values,
+      amount: amountValue,
+      date: values.date.toISOString(),
+      repeatInterval: values.recurring ? values.repeatInterval : null,
+    });
+  };
+
+  const openDate = () => datePicker.open({
+    value: values.date,
+    mode: 'datetime',
+    title: values.recurring ? 'Starts on' : 'Date',
+    quickPicks: true,
+    onPick: (date) => set({ date }),
+  });
+
+  const next = values.recurring ? nextOccurrence(values.date, values.repeatInterval) : null;
+  const repeatSubtitle = values.recurring
+    ? `${describeInterval(values.repeatInterval)}${next ? ` · next ${formatLongDate(next)}` : ''}`
+    : 'Off';
+
+  const keyboardOpen = keyboardOverlap > 0;
+  const saveBottom = keyboardOpen ? keyboardOverlap + 12 : insets.bottom + 16;
+  const footerHeight = SAVE_BUTTON_HEIGHT + saveBottom;
+  const title = `${isEditing ? 'Edit' : 'New'} ${isIncome ? 'income' : 'expense'}`;
+  const glow = isIncome ? 'green' : 'gold';
+
+  const body = (
+    <View ref={containerRef} onLayout={onContainerLayout} style={[styles.flex, { paddingBottom: keyboardOverlap }]}>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={[styles.content, { paddingBottom: footerHeight + SECTION_GAP - keyboardOverlap }]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+      >
+        <GradientCard tone={isIncome ? 'meadow' : 'halo'} radius={radius.xl} contentStyle={styles.heroContent}>
+          <SegmentedControl options={TRANSACTION_TYPES} value={values.type} onChange={selectType} variant="glass" style={styles.segment} />
+          <Text style={styles.prompt}>{isIncome ? 'How much came in?' : 'How much did you spend?'}</Text>
+          <AmountField label={null} value={values.amount} onChangeText={(amount) => set({ amount })} fontSize={60} accessibilityLabel="Amount" style={styles.amount} />
+          <View style={styles.summaryPill}>
+            <Ionicons name={categoryIcon(values.category)} size={15} color={colors.text} />
+            <Text style={styles.summaryText} numberOfLines={1}>{values.category || 'No category'} · {formatDateTime(values.date)}</Text>
           </View>
-          <TouchableOpacity accessibilityLabel="Close transaction form" onPress={onClose} style={styles.closeButton}>
-            <Ionicons name="close" size={22} color={colors.text} />
-          </TouchableOpacity>
+        </GradientCard>
+
+        <Text style={styles.sectionTitle}>Category</Text>
+        <View style={styles.chips}>
+          {activeCategories.map((item) => (
+            <Chip key={item.id || item.label} label={item.label} icon={item.icon} selected={values.category === item.label} onPress={() => set({ category: item.label })} />
+          ))}
         </View>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.amountCard}>
-            <Text style={styles.fieldLabel}>Amount</Text>
-            <View style={styles.amountRow}><Text style={styles.currency}>$</Text><TextInput value={values.amount} onChangeText={(amount) => setValues((current) => ({ ...current, amount }))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.textMuted} style={styles.amountInput} /></View>
+
+        <Text style={styles.sectionTitle}>Details</Text>
+        <Card contentStyle={styles.detailsContent}>
+          <ListRow
+            icon={<Ionicons name="calendar-outline" />}
+            title={values.recurring ? 'Starts' : 'Date'}
+            subtitle={formatDateTime(values.date)}
+            onPress={openDate}
+            right={<Ionicons name="chevron-forward" size={16} color={colors.textFaint} />}
+          />
+          <View style={styles.noteRow}>
+            <View style={styles.noteIcon}>
+              <Ionicons name="create-outline" size={18} color={colors.textSoft} />
+            </View>
+            <TextInput
+              value={values.note}
+              onChangeText={(note) => set({ note })}
+              placeholder="Add a note"
+              placeholderTextColor={colors.textFaint}
+              selectionColor={colors.accent}
+              style={styles.noteInput}
+              maxLength={120}
+              returnKeyType="done"
+              // The note is the last field; bring it clear of the keyboard and
+              // the pinned Save button once the keyboard has settled.
+              onFocus={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 350)}
+            />
           </View>
-          <View style={styles.card}>
-            <Text style={styles.fieldLabel}>Category</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-              {EXPENSE_CATEGORIES.map((item) => <TouchableOpacity key={item} onPress={() => setValues((current) => ({ ...current, category: item }))} style={[styles.chip, values.category === item && styles.chipActive]}><Text style={[styles.chipText, values.category === item && styles.chipTextActive]}>{item}</Text></TouchableOpacity>)}
-            </ScrollView>
-            <TextInput value={values.note} onChangeText={(note) => setValues((current) => ({ ...current, note }))} placeholder="Description (optional)" placeholderTextColor={colors.textMuted} style={styles.input} />
-            <View style={styles.settingRow}><View><Text style={styles.settingTitle}>Repeat this transaction</Text><Text style={styles.settingCopy}>Set up a recurring entry</Text></View><Switch value={values.recurring} onValueChange={(recurring) => setValues((current) => ({ ...current, recurring }))} trackColor={{ false: colors.borderStrong, true: colors.primary }} thumbColor={colors.text} /></View>
-            {values.recurring && <View style={styles.schedule}>
-              <Text style={styles.fieldLabel}>Start date</Text><TextInput value={values.startDate} onChangeText={(startDate) => setValues((current) => ({ ...current, startDate }))} placeholder="YYYY-MM-DD" placeholderTextColor={colors.textMuted} style={styles.input} />
-              <Text style={styles.fieldLabel}>Time</Text><TextInput value={values.time} onChangeText={(time) => setValues((current) => ({ ...current, time }))} placeholder="HH:MM" placeholderTextColor={colors.textMuted} style={styles.input} />
-              <Text style={styles.fieldLabel}>Repeat interval</Text><View style={styles.intervalRow}>{REPEAT_INTERVALS.map((item) => <TouchableOpacity key={item} onPress={() => setValues((current) => ({ ...current, repeatInterval: item }))} style={[styles.interval, values.repeatInterval === item && styles.intervalActive]}><Text style={[styles.intervalText, values.repeatInterval === item && styles.intervalTextActive]}>{item}</Text></TouchableOpacity>)}</View>
-            </View>}
-          </View>
-          <TouchableOpacity onPress={save} style={styles.saveButton}><Text style={styles.saveText}>{isEditing ? 'Save changes' : 'Save transaction'}</Text></TouchableOpacity>
-        </ScrollView>
-      </View>;
-  return fullScreen ? form : <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>{form}</Modal>;
+          <View style={styles.divider} />
+          <ListRow
+            icon={<Ionicons name="repeat-outline" />}
+            title="Repeat"
+            subtitle={repeatSubtitle}
+            showDivider={values.recurring}
+            right={
+              <Switch
+                value={values.recurring}
+                onValueChange={(recurring) => set({ recurring })}
+                trackColor={{ false: colors.surfaceRaised, true: colors.accent }}
+                thumbColor={colors.text}
+                ios_backgroundColor={colors.surfaceRaised}
+                // react-native-web paints the "on" thumb teal unless told otherwise.
+                {...(Platform.OS === 'web' ? { activeThumbColor: colors.text } : null)}
+                accessibilityLabel="Repeat this transaction"
+              />
+            }
+          />
+          {values.recurring ? (
+            <View style={styles.intervals}>
+              {REPEAT_INTERVALS.map((item) => (
+                <Chip key={item} label={item} selected={values.repeatInterval === item} onPress={() => set({ repeatInterval: item })} style={values.repeatInterval !== item && styles.intervalChip} />
+              ))}
+            </View>
+          ) : null}
+        </Card>
+        {values.recurring ? (
+          <Text style={styles.hint}>A copy is added automatically each time it comes due. Turn Repeat off to stop it.</Text>
+        ) : null}
+
+        {isEditing && onDelete ? (
+          <Button
+            label="Delete transaction"
+            variant="danger"
+            size="md"
+            icon={<Ionicons name="trash-outline" size={17} color={colors.negative} />}
+            onPress={() => onDelete(current)}
+            style={styles.delete}
+          />
+        ) : null}
+      </ScrollView>
+
+      <LinearGradient colors={scrim.colors} locations={scrim.locations} style={[styles.bottomScrim, { height: footerHeight + 40 }]} pointerEvents="none" />
+      <Button
+        label={isEditing ? 'Save changes' : `Save ${isIncome ? 'income' : 'expense'}`}
+        icon={<Ionicons name="checkmark" size={20} color={colors.pillText} />}
+        onPress={save}
+        disabled={!canSave}
+        style={[styles.saveButton, { bottom: saveBottom }]}
+      />
+    </View>
+  );
+
+  // The picker panel is a sibling of the header so its dimmed backdrop
+  // covers the whole sheet, header included.
+  if (fullScreen) {
+    return (
+      <SheetSurface glow={glow}>
+        <SheetHeader title={title} onClose={onClose} closeIcon="close" closeLabel="Cancel" />
+        {body}
+        {datePicker.panel}
+      </SheetSurface>
+    );
+  }
+
+  return (
+    <Sheet visible={visible} onClose={onClose} title={title} closeIcon="close" glow={glow}>
+      {body}
+      {datePicker.panel}
+    </Sheet>
+  );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.background, paddingTop: 28 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 24, marginBottom: 22 },
-  eyebrow: { color: colors.primarySoft, textTransform: 'uppercase', letterSpacing: 1.3, fontSize: 12, fontWeight: '700', marginBottom: 8 },
-  title: { color: colors.text, fontSize: 28, fontWeight: '800', maxWidth: 260 },
-  closeButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceMuted },
-  content: { padding: 24, paddingTop: 0, paddingBottom: 44 },
-  typeRow: { flexDirection: 'row', gap: 10, marginBottom: 18 }, typeButton: { flex: 1, alignItems: 'center', paddingVertical: 15, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }, typeButtonActive: { backgroundColor: colors.primary, borderColor: colors.primary }, typeText: { color: colors.textMuted, fontWeight: '700' }, typeTextActive: { color: colors.text },
-  amountCard: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.primary, borderRadius: 28, padding: 22, marginBottom: 16 }, fieldLabel: { color: colors.textSoft, fontSize: 14, fontWeight: '700', marginBottom: 12 }, amountRow: { flexDirection: 'row', alignItems: 'center' }, currency: { color: colors.textMuted, fontSize: 34, fontWeight: '700', marginRight: 10 }, amountInput: { flex: 1, color: colors.text, fontSize: 40, fontWeight: '800', paddingVertical: 2 },
-  card: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 28, padding: 20, marginBottom: 18 }, chips: { gap: 8, paddingBottom: 22 }, chip: { backgroundColor: colors.surfaceMuted, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: colors.border }, chipActive: { backgroundColor: '#12314a', borderColor: colors.primary }, chipText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' }, chipTextActive: { color: colors.primarySoft },
-  methodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 }, method: { width: '47%', backgroundColor: colors.surfaceMuted, borderRadius: 14, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: colors.border }, methodActive: { borderColor: colors.primary, backgroundColor: '#12314a' }, methodText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' }, methodTextActive: { color: colors.text }, input: { backgroundColor: colors.surfaceMuted, borderRadius: 16, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 15, paddingVertical: 14, color: colors.text, marginBottom: 18 },
-  settingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, settingTitle: { color: colors.text, fontSize: 15, fontWeight: '700', marginBottom: 4 }, settingCopy: { color: colors.textMuted, fontSize: 12 }, schedule: { marginTop: 22 }, intervalRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, interval: { paddingHorizontal: 13, paddingVertical: 10, borderRadius: 14, backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border }, intervalActive: { borderColor: colors.primary, backgroundColor: '#12314a' }, intervalText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' }, intervalTextActive: { color: colors.primarySoft }, saveButton: { backgroundColor: colors.primary, borderRadius: 20, alignItems: 'center', paddingVertical: 17 }, saveText: { color: colors.text, fontWeight: '800', fontSize: 16 },
+  flex: { flex: 1 },
+  content: { paddingHorizontal: GUTTER, paddingTop: 4 },
+  heroContent: { alignItems: 'center', paddingHorizontal: 18, paddingTop: 18, paddingBottom: 22 },
+  segment: { alignSelf: 'stretch', marginBottom: 22 },
+  prompt: { ...type.heading, fontSize: 17, color: colors.textSoft, marginBottom: 4 },
+  amount: { alignSelf: 'stretch' },
+  summaryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    maxWidth: '100%',
+    marginTop: 18,
+    height: 36,
+    paddingHorizontal: 14,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.55)',
+  },
+  summaryText: { ...type.label, color: colors.text, flexShrink: 1 },
+  sectionTitle: { ...type.heading, color: colors.text, marginTop: SECTION_GAP, marginBottom: 12, paddingHorizontal: 4 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: CARD_GAP },
+  detailsContent: { paddingVertical: 4, paddingHorizontal: 16 },
+  noteRow: { flexDirection: 'row', alignItems: 'center', minHeight: 66 },
+  noteIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.glass, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
+  noteInput: { flex: 1, ...type.body, color: colors.text, paddingVertical: 12 },
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.09)', marginLeft: 54 },
+  intervals: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingLeft: 54, paddingTop: 12, paddingBottom: 16 },
+  intervalChip: { backgroundColor: colors.surfaceRaised },
+  hint: { ...type.caption, color: colors.textMuted, marginTop: 10, paddingHorizontal: 4 },
+  delete: { marginTop: SECTION_GAP },
+  bottomScrim: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  saveButton: { position: 'absolute', left: GUTTER, right: GUTTER },
 });

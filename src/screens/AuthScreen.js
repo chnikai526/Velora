@@ -4,14 +4,13 @@ import {
   KeyboardAvoidingView,
   Image,
   Platform,
-  SafeAreaView,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -20,8 +19,18 @@ import {
 } from 'firebase/auth';
 import { primaryAuth } from '../lib/firebase';
 import { useDispatch } from 'react-redux';
-import { startPostLoginLoading } from '../../redux/Actions';
-import colors from '../theme/colors';
+import { finishPostLoginLoading, setCurrentUser, startPostLoginLoading } from '../../redux/Actions';
+import { colors, radius, type } from '../theme';
+import Button from '../components/Button';
+import Card from '../components/Card';
+import Input from '../components/Input';
+import ScreenBackground from '../components/ScreenBackground';
+import SegmentedControl from '../components/SegmentedControl';
+
+const MODES = [
+  { key: 'login', label: 'Log in' },
+  { key: 'signup', label: 'Sign up' },
+];
 
 const getAuthErrorMessage = (error) => {
   switch (error.code) {
@@ -91,6 +100,13 @@ export default function AuthScreen() {
 
   const clearError = () => setErrorMessage('');
 
+  // Switching tabs starts a fresh attempt — carrying the previous mode's
+  // error over made it look like the new form had already failed.
+  const selectMode = (nextMode) => {
+    setMode(nextMode);
+    clearError();
+  };
+
   const handlePasswordReset = async () => {
     clearError();
 
@@ -158,6 +174,10 @@ export default function AuthScreen() {
     }
 
     setIsSubmitting(true);
+    // Raised before the request: Firebase fires onAuthStateChanged the moment
+    // credentials resolve, so setting this afterwards let the main app render
+    // for a frame before the loading screen took over.
+    dispatch(startPostLoginLoading());
 
     try {
       if (isSignup) {
@@ -171,18 +191,21 @@ export default function AuthScreen() {
           await updateProfile(credentials.user, {
             displayName: fullName.trim(),
           });
+          // onAuthStateChanged already published this user without a
+          // displayName; re-publish so the greeting and profile show the name
+          // instead of falling back to "there" / the email prefix.
+          dispatch(setCurrentUser(credentials.user));
         }
       } else {
         await signInWithEmailAndPassword(primaryAuth, normalizedEmail, password);
       }
-
-      dispatch(startPostLoginLoading());
 
       setPassword('');
       if (isSignup) {
         setFullName('');
       }
     } catch (error) {
+      dispatch(finishPostLoginLoading());
       console.warn('Firebase Auth error:', error?.code, error?.message || error);
 
       showError(
@@ -197,271 +220,128 @@ export default function AuthScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.flex}
-      >
-        <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.hero}>
-            <View style={styles.brandRow}>
-              <Image source={require('../../assets/icon.png')} style={styles.brandIcon} />
-              <Text style={styles.kicker}>Velora</Text>
-            </View>
-            <Text style={styles.title}>
-              {isSignup ? 'Create your money space.' : 'Welcome back.'}
-            </Text>
-            <Text style={styles.subtitle}>
-              {isSignup
-                ? 'Start tracking your spending in one clean flow.'
-                : 'Sign in to get back to your expense dashboard.'}
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.toggleRow}>
-              <TouchableOpacity
-                style={[styles.toggle, !isSignup && styles.toggleActive]}
-                onPress={() => setMode('login')}
-                disabled={isSubmitting}
-              >
-                <Text
-                  style={[styles.toggleText, !isSignup && styles.toggleTextActive]}
-                >
-                  Login
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggle, isSignup && styles.toggleActive]}
-                onPress={() => setMode('signup')}
-                disabled={isSubmitting}
-              >
-                <Text
-                  style={[styles.toggleText, isSignup && styles.toggleTextActive]}
-                >
-                  Sign Up
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {isSignup ? (
-              <TextInput
-                value={fullName}
-                onChangeText={setFullName}
-                placeholder="Full name"
-                placeholderTextColor={colors.textMuted}
-                autoCorrect={false}
-                autoCapitalize="words"
-                textContentType="name"
-                style={styles.input}
-              />
-            ) : null}
-
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Email"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              autoCorrect={false}
-              autoComplete="email"
-              textContentType="emailAddress"
-              style={styles.input}
-            />
-
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password"
-              placeholderTextColor={colors.textMuted}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoComplete={isSignup ? 'new-password' : 'current-password'}
-              textContentType={isSignup ? 'newPassword' : 'password'}
-              style={styles.input}
-            />
-
-            <Text style={styles.fieldHint}>
-              {isSignup
-                ? 'Use at least 6 characters. Email/Password must be enabled in Firebase Auth.'
-                : 'Use the same email/password you registered with in Firebase Auth.'}
-            </Text>
-
-            {!isSignup ? (
-              <TouchableOpacity
-                onPress={() => void handlePasswordReset()}
-                disabled={isSubmitting}
-                style={styles.secondaryLinkButton}
-              >
-                <Text style={styles.secondaryLinkText}>Forgot password?</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            <TouchableOpacity
-              style={[
-                styles.primaryButton,
-                isSubmitting && styles.primaryButtonDisabled,
-              ]}
-              onPress={() => void handleSubmit()}
-              disabled={isSubmitting}
-            >
-              <Text style={styles.primaryButtonText}>
-                {isSubmitting
-                  ? isSignup
-                    ? 'Creating account...'
-                    : 'Signing in...'
-                  : isSignup
-                    ? 'Create account'
-                    : 'Continue'}
+    <ScreenBackground>
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.flex}
+        >
+          <ScrollView contentContainerStyle={styles.content}>
+            <View style={styles.hero}>
+              <View style={styles.brandRow}>
+                <Image source={require('../../assets/icon.png')} style={styles.brandIcon} />
+                <Text style={styles.brandName}>Velora</Text>
+              </View>
+              <Text style={styles.title}>
+                {isSignup ? 'Create your\nmoney space' : 'Welcome\nback'}
               </Text>
-            </TouchableOpacity>
+              <Text style={styles.subtitle}>
+                {isSignup
+                  ? 'Start tracking your spending in one clean flow.'
+                  : 'Sign in to get back to your expense dashboard.'}
+              </Text>
+            </View>
 
-            {errorMessage ? (
-              <Text style={styles.errorText}>{errorMessage}</Text>
-            ) : null}
+            <Card radius={radius.xl} contentStyle={styles.cardContent}>
+              <SegmentedControl options={MODES} value={mode} onChange={selectMode} disabled={isSubmitting} style={styles.toggleRow} />
 
-            <Text style={styles.helperText}>
-              {isSignup
-                ? 'Already have an account? Switch to Login.'
-                : 'New here? Switch to Sign Up to create a fresh account.'}
-            </Text>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+              {isSignup ? (
+                <Input
+                  value={fullName}
+                  onChangeText={setFullName}
+                  placeholder="Full name"
+                  autoCorrect={false}
+                  autoCapitalize="words"
+                  textContentType="name"
+                />
+              ) : null}
+
+              <Input
+                value={email}
+                onChangeText={setEmail}
+                placeholder="Email"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                autoCorrect={false}
+                autoComplete="email"
+                textContentType="emailAddress"
+              />
+
+              <Input
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Password"
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete={isSignup ? 'new-password' : 'current-password'}
+                textContentType={isSignup ? 'newPassword' : 'password'}
+              />
+
+              <Text style={styles.fieldHint}>
+                {isSignup
+                  ? 'Use at least 6 characters. Email/Password must be enabled in Firebase Auth.'
+                  : 'Use the same email/password you registered with in Firebase Auth.'}
+              </Text>
+
+              {!isSignup ? (
+                <Pressable
+                  onPress={() => void handlePasswordReset()}
+                  disabled={isSubmitting}
+                  style={styles.secondaryLinkButton}
+                >
+                  <Text style={styles.secondaryLinkText}>Forgot password?</Text>
+                </Pressable>
+              ) : null}
+
+              <Button
+                onPress={() => void handleSubmit()}
+                disabled={isSubmitting}
+                style={styles.primaryButton}
+                label={
+                  isSubmitting
+                    ? isSignup
+                      ? 'Creating account...'
+                      : 'Signing in...'
+                    : isSignup
+                      ? 'Create account'
+                      : 'Continue'
+                }
+              />
+
+              {errorMessage ? (
+                <Text style={styles.errorText}>{errorMessage}</Text>
+              ) : null}
+
+              <Text style={styles.helperText}>
+                {isSignup
+                  ? 'Already have an account? Switch to Log in.'
+                  : 'New here? Switch to Sign up to create a fresh account.'}
+              </Text>
+            </Card>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  flex: {
-    flex: 1,
-  },
-  content: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: 28,
-    backgroundColor: colors.background,
-  },
-  hero: {
-    marginBottom: 28,
-  },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  brandIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 9,
-    marginRight: 10,
-  },
-  kicker: {
-    color: colors.primarySoft,
-    textTransform: 'uppercase',
-    letterSpacing: 2,
-    fontSize: 12,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 38,
-    fontWeight: '800',
-    marginBottom: 12,
-  },
-  subtitle: {
-    color: colors.textMuted,
-    fontSize: 15,
-    lineHeight: 23,
-  },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 30,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 18,
-    padding: 4,
-    marginBottom: 18,
-  },
-  fieldHint: {
-    color: colors.textMuted,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: -2,
-    marginBottom: 10,
-  },
-  secondaryLinkButton: {
-    alignSelf: 'flex-start',
-    marginBottom: 14,
-  },
-  secondaryLinkText: {
-    color: colors.accent,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  toggle: {
-    flex: 1,
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  toggleActive: {
-    backgroundColor: colors.primary,
-  },
-  toggleText: {
-    color: colors.textMuted,
-    fontWeight: '700',
-  },
-  toggleTextActive: {
-    color: colors.text,
-  },
-  input: {
-    backgroundColor: colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 15,
-    color: colors.text,
-    marginBottom: 14,
-  },
-  primaryButton: {
-    backgroundColor: colors.primary,
-    borderRadius: 20,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  primaryButtonDisabled: {
-    opacity: 0.7,
-  },
-  primaryButtonText: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  helperText: {
-    color: colors.textMuted,
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: 14,
-    textAlign: 'center',
-  },
-  errorText: {
-    color: '#ff6b6b',
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 12,
-    textAlign: 'center',
-  },
+  safeArea: { flex: 1 },
+  flex: { flex: 1 },
+  content: { flexGrow: 1, justifyContent: 'center', padding: 16 },
+  hero: { alignItems: 'center', marginBottom: 28, paddingHorizontal: 12 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 28 },
+  brandIcon: { width: 34, height: 34, borderRadius: 10 },
+  brandName: { ...type.heading, color: colors.text },
+  title: { ...type.display, fontSize: 42, lineHeight: 46, color: colors.text, textAlign: 'center', marginBottom: 12 },
+  subtitle: { ...type.body, color: colors.textSoft, textAlign: 'center' },
+  cardContent: { padding: 20 },
+  toggleRow: { backgroundColor: 'rgba(255,255,255,0.05)', marginBottom: 18 },
+  fieldHint: { ...type.caption, lineHeight: 18, color: colors.textMuted, marginTop: -2, marginBottom: 10, paddingHorizontal: 4 },
+  secondaryLinkButton: { alignSelf: 'flex-start', marginBottom: 16, paddingHorizontal: 4 },
+  secondaryLinkText: { ...type.label, color: colors.accent },
+  primaryButton: { marginTop: 4, alignSelf: 'stretch' },
+  helperText: { ...type.body, fontSize: 13, color: colors.textMuted, marginTop: 16, textAlign: 'center' },
+  errorText: { ...type.body, fontSize: 13, color: colors.negative, marginTop: 12, textAlign: 'center' },
 });

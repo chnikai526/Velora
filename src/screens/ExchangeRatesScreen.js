@@ -1,14 +1,87 @@
 import React, { useMemo, useState } from 'react';
-import { FlatList, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Platform, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import colors from '../theme/colors';
+import { colors, GUTTER, radius, type } from '../theme';
+import Input from '../components/Input';
+import ListRow from '../components/ListRow';
+import SheetHeader from '../components/SheetHeader';
+import { SheetSurface } from '../components/Sheet';
+import { currencyName, formatAmount, formatRatesDate } from '../lib/currency';
 
-export default function ExchangeRatesScreen({ route }) {
+export default function ExchangeRatesScreen({ route, navigation }) {
+  const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
-  const updatedAt = route.params?.updatedAt;
-  const rows = useMemo(() => Object.entries(route.params?.rates || {}).filter(([currency]) => currency.includes(search.trim().toUpperCase())).sort(([left], [right]) => left.localeCompare(right)), [route.params?.rates, search]);
+  const rates = route.params?.rates;
+  const updated = formatRatesDate(route.params?.updatedAt);
 
-  return <SafeAreaView style={styles.safeArea}><View style={styles.content}><Text style={styles.title}>Current exchange rates</Text><Text style={styles.subtitle}>1 unit of currency in CAD · {updatedAt ? new Date(updatedAt).toLocaleDateString() : 'Latest available'}</Text><View style={styles.search}><Ionicons name="search" size={18} color={colors.textMuted}/><TextInput value={search} onChangeText={setSearch} placeholder="Search currency code" placeholderTextColor={colors.textMuted} autoCapitalize="characters" style={styles.searchInput}/></View><FlatList data={rows} keyExtractor={([currency]) => currency} contentContainerStyle={styles.list} renderItem={({ item: [currency, rate] }) => <View style={styles.row}><View style={styles.currencyIcon}><Text style={styles.currencyIconText}>{currency.slice(0, 1)}</Text></View><View style={styles.rowInfo}><Text style={styles.currency}>{currency}</Text><Text style={styles.meta}>1 {currency} = {Number(rate).toFixed(5)} CAD</Text></View><Text style={styles.rate}>{Number(rate).toFixed(5)}</Text></View>} ListEmptyComponent={<Text style={styles.empty}>No exchange rates found.</Text>}/></View></SafeAreaView>;
+  // Matches names as well as codes, like the converter's picker ("yen" finds
+  // JPY) — this list used to match codes only.
+  const rows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return Object.entries(rates || {})
+      .filter(([code]) => !query || code.toLowerCase().includes(query) || currencyName(code).toLowerCase().includes(query))
+      .sort(([left], [right]) => left.localeCompare(right));
+  }, [rates, search]);
+
+  return (
+    <SheetSurface>
+      {/* Pushed full-screen, so the status bar inset applies on every
+          platform — SheetHeader only adds it on Android. */}
+      <View style={{ paddingTop: Platform.OS === 'android' ? 0 : insets.top }}>
+        <SheetHeader
+          grabber={false}
+          title="Exchange rates"
+          subtitle={`1 unit in CAD · ${updated || 'latest available'}`}
+          onClose={() => navigation.goBack()}
+          closeIcon="arrow-back"
+        />
+      </View>
+      <View style={styles.content}>
+        <Input
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search name or code"
+          autoCorrect={false}
+          icon={<Ionicons name="search" size={18} color={colors.textMuted} />}
+          containerStyle={styles.search}
+        />
+        <FlatList
+          data={rows}
+          keyExtractor={([currency]) => currency}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          initialNumToRender={16}
+          style={styles.list}
+          contentContainerStyle={[rows.length ? styles.listCard : null, { marginBottom: insets.bottom + 16 }]}
+          ListEmptyComponent={<Text style={styles.empty}>{rates ? `No currency matches “${search.trim()}”.` : 'No exchange rates loaded.'}</Text>}
+          renderItem={({ item: [currency, rate], index }) => (
+            <ListRow
+              left={(
+                <View style={styles.codeBadge}>
+                  <Text style={styles.codeText}>{currency}</Text>
+                </View>
+              )}
+              title={currencyName(currency)}
+              subtitle={currency === 'CAD' ? 'Base currency' : `1 CAD = ${formatAmount(1 / Number(rate))} ${currency}`}
+              right={<Text style={styles.rate}>{formatAmount(Number(rate))}</Text>}
+              showDivider={index < rows.length - 1}
+            />
+          )}
+        />
+      </View>
+    </SheetSurface>
+  );
 }
 
-const styles = StyleSheet.create({safeArea:{flex:1,backgroundColor:colors.background},content:{flex:1,padding:20},title:{color:colors.text,fontSize:28,fontWeight:'800',marginTop:8},subtitle:{color:colors.textMuted,fontSize:12,marginTop:7,marginBottom:20},search:{flexDirection:'row',alignItems:'center',gap:10,backgroundColor:colors.surfaceMuted,borderWidth:1,borderColor:colors.border,borderRadius:16,paddingHorizontal:14,marginBottom:14},searchInput:{flex:1,color:colors.text,paddingVertical:13},list:{paddingBottom:24},row:{flexDirection:'row',alignItems:'center',backgroundColor:colors.surface,borderWidth:1,borderColor:colors.border,borderRadius:18,padding:14,marginBottom:9},currencyIcon:{width:38,height:38,borderRadius:13,backgroundColor:colors.primary,alignItems:'center',justifyContent:'center',marginRight:12},currencyIconText:{color:colors.text,fontWeight:'800'},rowInfo:{flex:1},currency:{color:colors.text,fontSize:15,fontWeight:'800',marginBottom:3},meta:{color:colors.textMuted,fontSize:11},rate:{color:colors.primarySoft,fontSize:14,fontWeight:'800'},empty:{color:colors.textMuted,textAlign:'center',paddingTop:28}});
+const styles = StyleSheet.create({
+  content: { flex: 1, paddingHorizontal: GUTTER },
+  search: { marginBottom: 12 },
+  list: { flex: 1 },
+  listCard: { backgroundColor: colors.surface, borderRadius: radius.lg, paddingHorizontal: 16, paddingVertical: 4 },
+  codeBadge: { width: 52, height: 40, borderRadius: radius.pill, backgroundColor: colors.glass, alignItems: 'center', justifyContent: 'center' },
+  codeText: { ...type.label, fontSize: 13, color: colors.text, letterSpacing: 0.3 },
+  rate: { ...type.numeric, fontSize: 15, color: colors.text },
+  empty: { ...type.body, color: colors.textMuted, textAlign: 'center', paddingTop: 28 },
+});
